@@ -1,21 +1,21 @@
-const express = require("express");
-const cors = require("cors");       // ⬅️ add this line
-
+const express = require('express');
+const cors = require('cors');
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.use(cors());                    // ⬅️ add this line so any origin (like aervoapp.com) can call your API
+app.use(cors());
 
-// Simple health check route
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", app: "Aervo backend" });
+app.get('/', (req, res) => {
+  res.send('Aervo backend is running!');
 });
 
-// Root route
-app.get("/", (req, res) => {
-  res.send("Aervo backend is running");
+app.get('/api/status', (req, res) => {
+  res.json({
+    status: 'ok',
+    app: 'Aervo backend',
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`Aervo backend listening on port ${PORT}`);
+app.listen(10000, () => {
+  console.log('Server running on port 10000');
 });
