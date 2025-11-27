@@ -311,6 +311,27 @@ app.post("/api/login", async (req, res) => {
 
 // ==== Start server ====
 const PORT = process.env.PORT || 10000;
+// ADMIN: List all users (temporary open access — later we secure it)
+app.get("/api/users", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, email, company_name, role, created_at
+       FROM users
+       ORDER BY created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      users: result.rows
+    });
+  } catch (err) {
+    console.error("Fetch users error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching users."
+    });
+  }
+});
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
