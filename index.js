@@ -7,11 +7,11 @@ const nodemailer = require("nodemailer");
 
 const app = express();
 
-// ==== Middlewares ====
+// ===== MIDDLEWARE =====
 app.use(cors());
 app.use(express.json());
 
-// ==== Postgres pool (Render + local) ====
+// ===== POSTGRES POOL (Render + local) =====
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production"
@@ -19,21 +19,21 @@ const pool = new Pool({
     : false,
 });
 
-// ==== JWT secret ====
+// ===== JWT SECRET =====
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
-// ==== Email transporter (Google Workspace / SMTP) ====
+// ===== EMAIL TRANSPORT (Google Workspace / SMTP) =====
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
+  host: process.env.EMAIL_HOST,          // e.g. smtp.gmail.com
   port: Number(process.env.EMAIL_PORT) || 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER,
+    user: process.env.EMAIL_USER,        // no-reply@aervoapp.com
     pass: process.env.EMAIL_PASS,
   },
 });
 
-// ==== Welcome email helper ====
+// ===== WELCOME EMAIL HELPER =====
 async function sendWelcomeEmail(toEmail, companyName) {
   if (!process.env.EMAIL_FROM) {
     console.warn("EMAIL_FROM not set, skipping welcome email");
@@ -100,7 +100,7 @@ async function sendWelcomeEmail(toEmail, companyName) {
           <h3 style="margin:0 0 8px;font-size:15px;color:#e5ecff;">What you can do with Aervo</h3>
           <ul style="margin:0 0 10px 18px;padding:0;font-size:13px;color:#9ca7d6;line-height:1.7;">
             <li>Connect your tools and see key numbers in one place.</li>
-            <li>Ask natural questions like “How did we do this month?” and get clear answers.</li>
+            <li>Ask questions like “How did we do this month?” and get clear answers.</li>
             <li>Spot trends, slowdowns, and opportunities without digging through spreadsheets.</li>
           </ul>
         </td>
@@ -135,19 +135,18 @@ async function sendWelcomeEmail(toEmail, companyName) {
   `;
 
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_FROM, // e.g. "Aervo <no-reply@aervoapp.com>"
     to: toEmail,
     subject: "Welcome to Aervo",
     html,
   });
 }
 
-// ==== Root health check ====
+// ===== BASIC HEALTH CHECKS =====
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
 
-// ==== API status endpoint ====
 app.get("/api/status", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW() AS now");
@@ -166,11 +165,7 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
-/**
- * SIGNUP: create a new user account
- * POST /api/signup
- * body: { email, password, companyName }
- */
+// ===== SIGNUP =====
 app.post("/api/signup", async (req, res) => {
   try {
     const { email, password, companyName } = req.body;
@@ -213,18 +208,21 @@ app.post("/api/signup", async (req, res) => {
 
     const user = insertResult.rows[0];
 
-    // 4) Create JWT
+    // 4) Fire welcome email (don't block signup if it fails)
+    try {
+      await sendWelcomeEmail(user.email, user.company_name);
+    } catch (emailErr) {
+      console.warn("Welcome email failed:", emailErr);
+    }
+
+    // 5) Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // 5) Fire-and-forget welcome email
-    sendWelcomeEmail(user.email, user.company_name).catch((err) =>
-      console.error("Failed to send welcome email:", err)
-    );
-
+    // 6) Respond
     res.json({
       success: true,
       token,
@@ -244,11 +242,7 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-/**
- * LOGIN: existing user signs in
- * POST /api/login
- * body: { email, password }
- */
+// ===== LOGIN =====
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -261,7 +255,6 @@ app.post("/api/login", async (req, res) => {
 
     const normalizedEmail = email.toLowerCase();
 
-    // Look up user by email
     const result = await pool.query(
       "SELECT id, email, password_hash, company_name, role FROM users WHERE email = $1",
       [normalizedEmail]
@@ -275,7 +268,6 @@ app.post("/api/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    // Compare password
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res
@@ -283,7 +275,6 @@ app.post("/api/login", async (req, res) => {
         .json({ success: false, message: "Invalid credentials." });
     }
 
-    // Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
@@ -309,29 +300,8 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// ==== Start server ====
+// ===== START SERVER =====
 const PORT = process.env.PORT || 10000;
-// ADMIN: List all users (temporary open access — later we secure it)
-app.get("/api/users", async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, email, company_name, role, created_at
-       FROM users
-       ORDER BY created_at DESC`
-    );
-
-    res.json({
-      success: true,
-      users: result.rows
-    });
-  } catch (err) {
-    console.error("Fetch users error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching users."
-    });
-  }
-});
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
