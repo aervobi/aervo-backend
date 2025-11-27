@@ -7,47 +7,47 @@ const nodemailer = require("nodemailer");
 
 const app = express();
 
-// ===== MIDDLEWARE =====
+// ================== MIDDLEWARE ==================
 app.use(cors());
 app.use(express.json());
 
-// ===== POSTGRES POOL (Render + local) =====
+// ================== POSTGRES POOL ==================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : false,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: false }
+    : false,
 });
 
-// ===== JWT SECRET =====
+// ================== JWT SECRET ==================
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
-// ===== EMAIL TRANSPORT (Google Workspace / SMTP) =====
-// Make sure these exist on Render:
-// EMAIL_HOST=smtp.gmail.com
-// EMAIL_PORT=587
-// EMAIL_USER=no-reply@aervoapp.com
-// EMAIL_PASS=<your app password, no spaces>
-// EMAIL_FROM="Aervo <no-reply@aervoapp.com>"
+// ================== EMAIL TRANSPORT (SMTP) ==================
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
+  host: process.env.EMAIL_HOST,              // e.g. smtp.gmail.com
   port: Number(process.env.EMAIL_PORT) || 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER,            // e.g. no-reply@aervoapp.com
+    pass: process.env.EMAIL_PASS,           // Gmail app password (no spaces)
   },
 });
 
-// ===== WELCOME EMAIL HELPER =====
+// Optional: log if SMTP works (will show in Render logs)
+transporter.verify((err, success) => {
+  if (err) {
+    console.error("❌ SMTP connection FAILED:", err.message || err);
+  } else {
+    console.log("✅ SMTP connection OK as", process.env.EMAIL_USER);
+  }
+});
+
+// ================== WELCOME EMAIL HELPER ==================
 async function sendWelcomeEmail(toEmail, companyName) {
   if (!process.env.EMAIL_FROM) {
     console.warn("EMAIL_FROM not set — skipping welcome email.");
     return;
   }
-
-  const safeName = companyName || "there";
 
   const html = `
   <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
@@ -63,7 +63,7 @@ async function sendWelcomeEmail(toEmail, companyName) {
       <tr>
         <td style="padding:40px 40px 20px;">
           <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
-            Welcome to Aervo, ${safeName} 👋
+            Welcome to Aervo, ${companyName || "there"} 👋
           </h1>
           <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
             We're excited to have you here. Aervo helps you understand your business faster through clean dashboards, simple insights, and smart AI answers.
@@ -123,19 +123,15 @@ async function sendWelcomeEmail(toEmail, companyName) {
   </div>
   `;
 
-  console.log("Attempting welcome email to", toEmail);
-
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_FROM,   // e.g. 'Aervo <no-reply@aervoapp.com>'
     to: toEmail,
     subject: "Welcome to Aervo",
     html,
   });
-
-  console.log("Welcome email sent to", toEmail);
 }
 
-// ===== BASIC HEALTH CHECKS =====
+// ================== HEALTH CHECKS ==================
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
@@ -158,7 +154,20 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
-// ===== SIGNUP =====
+// ================== TEST EMAIL ENDPOINT ==================
+app.get("/api/test-email", async (req, res) => {
+  const to = req.query.to || process.env.TEST_EMAIL || process.env.EMAIL_USER;
+
+  try {
+    await sendWelcomeEmail(to, "Aervo Test Company");
+    res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    console.error("Test email failed:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ================== SIGNUP ==================
 app.post("/api/signup", async (req, res) => {
   try {
     const { email, password, companyName } = req.body;
@@ -189,7 +198,7 @@ app.post("/api/signup", async (req, res) => {
     const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // 3) Insert user into database
+    // 3) Insert user
     const insertResult = await pool.query(
       `
       INSERT INTO users (email, password_hash, company_name, role)
@@ -201,21 +210,14 @@ app.post("/api/signup", async (req, res) => {
 
     const user = insertResult.rows[0];
 
-    // 4) Send welcome email (don't block signup if it fails)
-    try {
-      await sendWelcomeEmail(user.email, user.company_name);
-    } catch (emailErr) {
-      console.error("Welcome email failed:", emailErr);
-    }
-
-    // 5) Create JWT
+    // 4) Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // 6) Return response
+    // 5) Respond immediately
     res.json({
       success: true,
       token,
@@ -226,6 +228,12 @@ app.post("/api/signup", async (req, res) => {
         role: user.role,
       },
     });
+
+    // 6) Fire welcome email in the background (don't block signup)
+    sendWelcomeEmail(normalizedEmail, companyName).catch((err) => {
+      console.error("Welcome email failed:", err);
+    });
+
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
@@ -235,16 +243,15 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// ===== LOGIN =====
+// ================== LOGIN ==================
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email and password are required.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required." });
     }
 
     const normalizedEmail = email.toLowerCase();
@@ -294,7 +301,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// ===== START SERVER =====
+// ================== START SERVER ==================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
