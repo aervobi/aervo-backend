@@ -14,21 +14,28 @@ app.use(express.json());
 // ===== POSTGRES POOL (Render + local) =====
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 // ===== JWT SECRET =====
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
 // ===== EMAIL TRANSPORT (Google Workspace / SMTP) =====
+// Make sure these exist on Render:
+// EMAIL_HOST=smtp.gmail.com
+// EMAIL_PORT=587
+// EMAIL_USER=no-reply@aervoapp.com
+// EMAIL_PASS=<your app password, no spaces>
+// EMAIL_FROM="Aervo <no-reply@aervoapp.com>"
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,          // e.g. smtp.gmail.com
+  host: process.env.EMAIL_HOST,
   port: Number(process.env.EMAIL_PORT) || 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER,        // no-reply@aervoapp.com
+    user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
@@ -36,110 +43,96 @@ const transporter = nodemailer.createTransport({
 // ===== WELCOME EMAIL HELPER =====
 async function sendWelcomeEmail(toEmail, companyName) {
   if (!process.env.EMAIL_FROM) {
-    console.warn("EMAIL_FROM not set, skipping welcome email");
+    console.warn("EMAIL_FROM not set — skipping welcome email.");
     return;
   }
 
+  const safeName = companyName || "there";
+
   const html = `
-  <div style="background-color:#050817;padding:32px 0;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#050817;color:#d6def8;">
+  <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
+      
       <tr>
-        <td style="padding:16px 32px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.06);">
-          <span style="display:inline-block;font-weight:600;letter-spacing:4px;font-size:13px;color:#8fbfff;">
-            AERVO
-          </span>
+        <td style="padding:32px 40px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.05);">
+          <img src="https://aervoapp.com/logo.png" width="78" style="opacity:0.95;filter:drop-shadow(0 0 10px rgba(137,180,255,0.9))" alt="Aervo Logo">
+          <div style="font-size:13px;letter-spacing:4px;color:#8fbfff;margin-top:8px;">AERVO</div>
         </td>
       </tr>
 
       <tr>
-        <td style="padding:32px 32px 12px;">
-          <h1 style="margin:0 0 12px;font-size:24px;color:#e5ecff;">
-            Welcome to Aervo, ${companyName || "there"} 👋
+        <td style="padding:40px 40px 20px;">
+          <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
+            Welcome to Aervo, ${safeName} 👋
           </h1>
-          <p style="margin:0;font-size:14px;color:#9ca7d6;line-height:1.6;">
-            Thanks for creating your account. Aervo gives you a higher view of your business by
-            pulling your data into one place and turning it into clear, actionable insights.
+          <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
+            We're excited to have you here. Aervo helps you understand your business faster through clean dashboards, simple insights, and smart AI answers.
           </p>
         </td>
       </tr>
 
       <tr>
-        <td style="padding:12px 32px 24px;">
+        <td style="padding:20px 40px;">
           <div style="
-            border-radius:16px;
+            border-radius:14px;
             border:1px solid rgba(143,191,255,0.35);
-            background:radial-gradient(circle at top left,#1a243d,#050817);
-            padding:20px 18px;
+            background:radial-gradient(circle at top left,#1e2f55,#0a0f2b);
+            padding:24px 22px;
+            box-shadow:0 0 26px rgba(80,130,255,0.25);
           ">
-            <h2 style="margin:0 0 8px;font-size:16px;color:#e5ecff;">
-              A higher view of your business
-            </h2>
-            <p style="margin:0;font-size:13px;color:#a6b3dd;line-height:1.6;">
-              See sales trends, understand performance, and spot issues early with AI-powered summaries
-              tailored for busy owners.
+            <h2 style="margin:0 0 10px;color:#e5ecff;font-size:18px;font-weight:500;">Your new command center</h2>
+            <p style="margin:0;color:#a6b3dd;font-size:14px;line-height:1.7;">
+              Track revenue, trends, products, and customer behavior — all in one place.
+              Aervo shows you the story behind your numbers.
             </p>
-            <div style="margin-top:14px;">
-              <span style="
-                display:inline-block;
-                font-size:11px;
-                padding:4px 10px;
-                border-radius:999px;
-                border:1px solid rgba(143,191,255,0.5);
-                color:#8fbfff;
-                background:rgba(5,8,23,0.9);
-              ">
-                Live metrics • AI insights • Clean dashboards
-              </span>
-            </div>
+            <ul style="margin:16px 0 0 20px;padding:0;color:#c2cff6;font-size:14px;line-height:1.8;">
+              <li>Clean dashboards that highlight what matters</li>
+              <li>Live performance insights at a glance</li>
+              <li>AI explanations you can understand instantly</li>
+            </ul>
           </div>
         </td>
       </tr>
 
       <tr>
-        <td style="padding:12px 32px 8px;">
-          <h3 style="margin:0 0 8px;font-size:15px;color:#e5ecff;">What you can do with Aervo</h3>
-          <ul style="margin:0 0 10px 18px;padding:0;font-size:13px;color:#9ca7d6;line-height:1.7;">
-            <li>Connect your tools and see key numbers in one place.</li>
-            <li>Ask questions like “How did we do this month?” and get clear answers.</li>
-            <li>Spot trends, slowdowns, and opportunities without digging through spreadsheets.</li>
-          </ul>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:4px 32px 24px;">
-          <a href="https://aervoapp.com/dashboard.html" style="
-            display:inline-block;
-            padding:10px 18px;
-            border-radius:999px;
-            font-size:13px;
-            text-decoration:none;
-            background:#1a243d;
-            color:#b4cdff;
-            box-shadow:0 0 12px rgba(137,180,255,0.5);
-          ">
+        <td style="padding:10px 40px 32px;">
+          <a href="https://aervoapp.com/dashboard.html"
+            style="
+              display:inline-block;
+              padding:12px 26px;
+              background:#1a243d;
+              border-radius:999px;
+              color:#b4cdff;
+              font-size:15px;
+              text-decoration:none;
+              box-shadow:0 0 18px rgba(137,180,255,0.6),0 0 40px rgba(80,130,255,0.4);
+            "
+          >
             Open your dashboard
           </a>
         </td>
       </tr>
 
       <tr>
-        <td style="padding:16px 32px 32px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:#6c7598;">
-          You’re receiving this email because you created an Aervo account.
-          <br><br>
-          © ${new Date().getFullYear()} Aervo. All rights reserved.
+        <td style="padding:26px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);font-size:12px;color:#6c7598;">
+          You're receiving this email because you created an Aervo account.<br><br>
+          © ${new Date().getFullYear()} Aervo — All rights reserved.
         </td>
       </tr>
     </table>
   </div>
   `;
 
+  console.log("Attempting welcome email to", toEmail);
+
   await transporter.sendMail({
-    from: process.env.EMAIL_FROM, // e.g. "Aervo <no-reply@aervoapp.com>"
+    from: process.env.EMAIL_FROM,
     to: toEmail,
     subject: "Welcome to Aervo",
     html,
   });
+
+  console.log("Welcome email sent to", toEmail);
 }
 
 // ===== BASIC HEALTH CHECKS =====
@@ -179,7 +172,7 @@ app.post("/api/signup", async (req, res) => {
 
     const normalizedEmail = email.toLowerCase();
 
-    // 1) Check if email already exists
+    // 1) Check if user already exists
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
       [normalizedEmail]
@@ -196,7 +189,7 @@ app.post("/api/signup", async (req, res) => {
     const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // 3) Insert new user
+    // 3) Insert user into database
     const insertResult = await pool.query(
       `
       INSERT INTO users (email, password_hash, company_name, role)
@@ -208,11 +201,11 @@ app.post("/api/signup", async (req, res) => {
 
     const user = insertResult.rows[0];
 
-    // 4) Fire welcome email (don't block signup if it fails)
+    // 4) Send welcome email (don't block signup if it fails)
     try {
       await sendWelcomeEmail(user.email, user.company_name);
     } catch (emailErr) {
-      console.warn("Welcome email failed:", emailErr);
+      console.error("Welcome email failed:", emailErr);
     }
 
     // 5) Create JWT
@@ -222,7 +215,7 @@ app.post("/api/signup", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // 6) Respond
+    // 6) Return response
     res.json({
       success: true,
       token,
@@ -248,9 +241,10 @@ app.post("/api/login", async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email and password are required." });
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required.",
+      });
     }
 
     const normalizedEmail = email.toLowerCase();
