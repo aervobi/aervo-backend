@@ -323,39 +323,39 @@ app.post("/api/forgot-password", async (req, res) => {
 
     // Generate token + expiry
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour from now
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
 
-    // Save token + expiry in the users table
+    // Save token + expiry in the database
     await pool.query(
       `
         UPDATE users
-        SET password_reset_token = $1,
-            password_reset_expires_at = $2
+        SET reset_token = $1,
+            reset_token_expires = $2
         WHERE id = $3
       `,
       [token, expiresAt, user.id]
     );
 
-    // Build reset URL for the frontend
+    // Build reset URL
     const baseUrl =
       process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
     const resetLink = `${baseUrl.replace(/\/+$/, "")}/reset-password.html?token=${encodeURIComponent(
       token
     )}`;
 
-    // Send email with SendGrid
+    // Send email via SendGrid
     const msg = {
       to: user.email,
-      from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com (verified in SendGrid)
+      from: process.env.SENDGRID_FROM_EMAIL,
       subject: "Reset your Aervo password",
       html: `
         <p>Hi,</p>
-        <p>We received a request to reset your Aervo password.</p>
+        <p>You requested to reset your Aervo password.</p>
         <p>
           <a href="${resetLink}">Click here to reset your password</a>.
-          This link will expire in 1 hour.
+          This link expires in 1 hour.
         </p>
-        <p>If you didn't request this, you can safely ignore this email.</p>
+        <p>If you did not request this, you can ignore this email.</p>
       `,
     };
 
@@ -381,34 +381,6 @@ app.post("/api/forgot-password", async (req, res) => {
 });
 
     const userEmail = result.rows[0].email;
-
-    // Generate token and store it in memory (demo)
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + 1000 * 60 * 60; // 1 hour
-
-    passwordResetTokens[token] = { email: userEmail, expiresAt };
-
-    // Send email via SendGrid helper
-    await sendPasswordResetEmail(userEmail, token);
-
-    return res.json({
-      success: true,
-      message: "If an account exists, we sent a reset link.",
-    });
-  } catch (err) {
-    console.error("Error in /api/forgot-password", err);
-
-    const sgError =
-      err.response?.body?.errors?.[0]?.message ||
-      err.message ||
-      "Something went wrong on the server.";
-
-    return res.status(500).json({
-      success: false,
-      message: sgError,
-    });
-  }
-});
 
 // ================== RESET PASSWORD ==================
 app.post("/api/reset-password", async (req, res) => {
