@@ -51,40 +51,106 @@ async function sendWelcomeEmail(toEmail, companyName) {
   console.log("Welcome email sent to", toEmail);
 }
 
-// Password reset email helper
-async function sendPasswordResetEmail(toEmail, token) {
-  const baseUrl =
-    process.env.FRONTEND_BASE_URL || "https://aervoapp.com"; // fallback
+// Helper: send welcome email (SendGrid, Aervo themed)
+async function sendWelcomeEmail(toEmail, companyName) {
+  const appName = "Aervo";
+  const brandUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
 
-  const resetUrl = `${baseUrl.replace(/\/+$/, "")}/reset-password.html?token=${encodeURIComponent(
-    token
-  )}`;
+  const html = `
+  <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
+      
+      <!-- Header -->
+      <tr>
+        <td style="padding:32px 40px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.05);">
+          <img src="https://aervoapp.com/logo.png" width="78" style="opacity:0.95;filter:drop-shadow(0 0 10px rgba(137,180,255,0.9))" alt="Aervo Logo">
+          <div style="font-size:13px;letter-spacing:4px;color:#8fbfff;margin-top:8px;">AERVO</div>
+        </td>
+      </tr>
 
-  const msg = {
+      <!-- Hero text -->
+      <tr>
+        <td style="padding:40px 40px 20px;">
+          <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
+            Welcome to ${appName}, ${companyName || "there"} 👋
+          </h1>
+          <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
+            Hey there, we got your sign up and your new command center is ready.
+            Aervo helps you understand your business faster with clean dashboards,
+            simple insights, and smart AI answers.
+          </p>
+        </td>
+      </tr>
+
+      <!-- Feature highlight -->
+      <tr>
+        <td style="padding:20px 40px;">
+          <div style="
+            border-radius:14px;
+            border:1px solid rgba(143,191,255,0.35);
+            background:radial-gradient(circle at top left,#1e2f55,#0a0f2b);
+            padding:24px 22px;
+            box-shadow:0 0 26px rgba(80,130,255,0.25);
+          ">
+            <h2 style="margin:0 0 10px;color:#e5ecff;font-size:18px;font-weight:500;">
+              What you can do with Aervo
+            </h2>
+            <p style="margin:0;color:#a6b3dd;font-size:14px;line-height:1.7;">
+              Think of Aervo as a higher view of your business. No busywork, no spreadsheets,
+              just the story behind your numbers.
+            </p>
+            <ul style="margin:16px 0 0 20px;padding:0;color:#c2cff6;font-size:14px;line-height:1.8;">
+              <li>See today’s revenue and trends at a glance</li>
+              <li>Spot winning products and slow movers quickly</li>
+              <li>Ask questions in plain language and get clear answers</li>
+            </ul>
+          </div>
+        </td>
+      </tr>
+
+      <!-- CTA -->
+      <tr>
+        <td style="padding:10px 40px 32px;">
+          <a href="${brandUrl.replace(/\/+$/, "")}/dashboard.html"
+            style="
+              display:inline-block;
+              padding:12px 26px;
+              background:#1a243d;
+              border-radius:999px;
+              color:#b4cdff;
+              font-size:15px;
+              text-decoration:none;
+              box-shadow:0 0 18px rgba(137,180,255,0.6),0 0 40px rgba(80,130,255,0.4);
+            "
+          >
+            Open your dashboard
+          </a>
+          <p style="margin-top:12px;font-size:12px;color:#8b94c0;">
+            Or copy and paste this link into your browser:<br>
+            <span style="word-break:break-all;color:#c5cff6;">
+              ${brandUrl.replace(/\/+$/, "")}/dashboard.html
+            </span>
+          </p>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding:26px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);font-size:12px;color:#6c7598;">
+          You're receiving this because an Aervo account was created with this email.<br><br>
+          © ${new Date().getFullYear()} ${appName} — All rights reserved.
+        </td>
+      </tr>
+    </table>
+  </div>
+  `;
+
+  await sgMail.send({
     to: toEmail,
     from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com
-    subject: "Reset your Aervo password",
-    html: `
-      <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px;">
-        <h2 style="color: #111827;">Reset your Aervo password</h2>
-        <p>We received a request to reset the password for your Aervo account.</p>
-        <p>If you made this request, click the button below:</p>
-        <p>
-          <a href="${resetUrl}"
-             style="display:inline-block; padding: 10px 18px; background:#4f46e5; color:#ffffff; text-decoration:none; border-radius:999px;">
-            Reset password
-          </a>
-        </p>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; color:#374151;">${resetUrl}</p>
-        <p>If you did not request this, you can ignore this email.</p>
-        <p style="margin-top:24px; font-size:12px; color:#6b7280;">&copy; ${new Date().getFullYear()} Aervo</p>
-      </div>
-    `,
-  };
-
-  await sgMail.send(msg);
-  console.log("Password reset email sent to", toEmail);
+    subject: `Welcome to ${appName} 🚀`,
+    html,
+  });
 }
 
 // ================== IN-MEMORY RESET TOKEN STORE ==================
@@ -210,18 +276,13 @@ app.post("/api/signup", async (req, res) => {
       },
     });
 
-    // 6) Fire welcome email in the background (don't block signup)
-    sendWelcomeEmail(normalizedEmail, companyName).catch((err) => {
-      console.error("Welcome email failed:", err);
-    });
-  } catch (err) {
-    console.error("Signup error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Error creating account. Please try again.",
-    });
-  }
-});
+    
+// 6) Send Aervo Welcome Email (new HTML design)
+sendWelcomeEmail({
+  toEmail: normalizedEmail,
+  companyName,
+  userRole: user.role
+}).catch((err) => console.error("Welcome email failed:", err));
 
 // ================== LOGIN ==================
 app.post("/api/login", async (req, res) => {
