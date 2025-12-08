@@ -293,6 +293,7 @@ app.post("/api/login", async (req, res) => {
 
 // ================== FORGOT PASSWORD ==================
 // --- FORGOT PASSWORD: send reset link via email (DB-backed) ---
+// ================== FORGOT PASSWORD ==================
 app.post("/api/forgot-password", async (req, res) => {
   const { email } = req.body;
 
@@ -323,7 +324,7 @@ app.post("/api/forgot-password", async (req, res) => {
 
     // Generate token + expiry
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour from now
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
 
     // Save token + expiry in the users table
     await pool.query(
@@ -343,19 +344,86 @@ app.post("/api/forgot-password", async (req, res) => {
       ""
     )}/reset-password.html?token=${encodeURIComponent(token)}`;
 
-    // Send email with SendGrid
+    const year = new Date().getFullYear();
+
+    // Send Aervo-themed email with SendGrid
     await sgMail.send({
       to: user.email,
       from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com
       subject: "Reset your Aervo password",
       html: `
-        <p>Hi,</p>
-        <p>We received a request to reset your Aervo password.</p>
-        <p>
-          <a href="${resetLink}">Click here to reset your password</a>.
-          This link will expire in 1 hour.
-        </p>
-        <p>If you didn't request this, you can safely ignore this email.</p>
+        <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
+            
+            <tr>
+              <td style="padding:24px 32px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.06);">
+                <img src="https://aervoapp.com/logo.png" width="72" alt="Aervo Logo"
+                  style="display:block;margin:0 auto 6px;filter:drop-shadow(0 0 10px rgba(137,180,255,0.8));">
+                <div style="font-size:12px;letter-spacing:4px;color:#8fbfff;">AERVO</div>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:32px 32px 12px;">
+                <h1 style="margin:0 0 8px;font-size:22px;color:#e5ecff;font-weight:600;">
+                  Forgot your password?
+                </h1>
+                <p style="margin:0;font-size:14px;line-height:1.7;color:#9ca7d6;">
+                  Hey there, we got a request to reset the password for your Aervo account
+                  (<span style="color:#c2cff6;">${user.email}</span>).
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:12px 32px 8px;">
+                <p style="margin:0 0 10px;font-size:14px;line-height:1.7;color:#a6b3dd;">
+                  No worries, it happens. Click the button below to choose a new password
+                  and get signed back into your dashboard.
+                </p>
+                <p style="margin:0 0 20px;">
+                  <a href="${resetLink}"
+                     style="display:inline-block;padding:11px 22px;border-radius:999px;
+                            background:linear-gradient(135deg,#4f46e5,#7c3aed);
+                            color:#ffffff;text-decoration:none;font-size:14px;
+                            box-shadow:0 0 18px rgba(127,156,255,0.7);">
+                    Reset your password
+                  </a>
+                </p>
+                <p style="margin:0;font-size:12px;line-height:1.6;color:#7c86b0;">
+                  This link will work for about 1 hour. After that, you can always request a new one.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:16px 32px 8px;">
+                <p style="margin:0 0 6px;font-size:13px;color:#9ca7d6;">
+                  If the button doesn't work, copy and paste this link into your browser:
+                </p>
+                <p style="margin:0;font-size:12px;color:#c2cff6;word-break:break-all;">
+                  ${resetLink}
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:16px 32px 24px;">
+                <p style="margin:0;font-size:12px;line-height:1.7;color:#6c7598;">
+                  Didn’t ask to reset your password? You can safely ignore this email and your
+                  password will stay the same.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:18px 32px 24px;text-align:center;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:#6c7598;">
+                © ${year} Aervo · Helping you see your business from a higher view.
+              </td>
+            </tr>
+
+          </table>
+        </div>
       `,
     });
 
