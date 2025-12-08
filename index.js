@@ -323,9 +323,9 @@ app.post("/api/forgot-password", async (req, res) => {
 
     // Generate token + expiry
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour from now
 
-    // Save token + expiry in the database
+    // Save token + expiry in the users table
     await pool.query(
       `
         UPDATE users
@@ -336,30 +336,28 @@ app.post("/api/forgot-password", async (req, res) => {
       [token, expiresAt, user.id]
     );
 
-    // Build reset URL
-    const baseUrl =
-      process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-    const resetLink = `${baseUrl.replace(/\/+$/, "")}/reset-password.html?token=${encodeURIComponent(
-      token
-    )}`;
+    // Build reset URL for the frontend
+    const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+    const resetLink = `${baseUrl.replace(
+      /\/+$/,
+      ""
+    )}/reset-password.html?token=${encodeURIComponent(token)}`;
 
-    // Send email via SendGrid
-    const msg = {
+    // Send email with SendGrid
+    await sgMail.send({
       to: user.email,
-      from: process.env.SENDGRID_FROM_EMAIL,
+      from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com
       subject: "Reset your Aervo password",
       html: `
         <p>Hi,</p>
-        <p>You requested to reset your Aervo password.</p>
+        <p>We received a request to reset your Aervo password.</p>
         <p>
           <a href="${resetLink}">Click here to reset your password</a>.
-          This link expires in 1 hour.
+          This link will expire in 1 hour.
         </p>
-        <p>If you did not request this, you can ignore this email.</p>
+        <p>If you didn't request this, you can safely ignore this email.</p>
       `,
-    };
-
-    await sgMail.send(msg);
+    });
 
     return res.json({
       success: true,
@@ -379,9 +377,7 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 });
-
-    const userEmail = result.rows[0].email;
-
+// ================== RESET PASSWORD ==================
 // ================== RESET PASSWORD ==================
 app.post("/api/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
@@ -393,33 +389,41 @@ app.post("/api/reset-password", async (req, res) => {
     });
   }
 
-  const record = passwordResetTokens[token];
-
-  if (!record) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid or expired reset link.",
-    });
-  }
-
-  if (record.expiresAt < Date.now()) {
-    delete passwordResetTokens[token];
-    return res.status(400).json({
-      success: false,
-      message: "Reset link has expired. Please request a new one.",
-    });
-  }
-
   try {
-    const hashed = await bcrypt.hash(newPassword, 10);
-
-    await pool.query(
-      "UPDATE users SET password_hash = $1 WHERE email = $2",
-      [hashed, record.email.toLowerCase()]
+    // Look up user by reset token and make sure it hasn't expired
+    const result = await pool.query(
+      `
+        SELECT id, email
+        FROM users
+        WHERE reset_token = $1
+          AND reset_token_expires > NOW()
+      `,
+      [token]
     );
 
-    // Kill the token so it can't be reused
-    delete passwordResetTokens[token];
+    if (result.rowCount === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset link.",
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Hash the new password
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear the reset token
+    await pool.query(
+      `
+        UPDATE users
+        SET password_hash = $1,
+            reset_token = NULL,
+            reset_token_expires = NULL
+        WHERE id = $2
+      `,
+      [hashed, user.id]
+    );
 
     return res.json({
       success: true,
