@@ -11,88 +11,143 @@ const crypto = require("crypto");
 // ============= SENDGRID SETUP =============
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Helper: Aervo-styled Welcome Email
-async function sendWelcomeEmail({ toEmail, companyName, userRole }) {
+// ================== WELCOME EMAIL (AERVO THEME) ==================
+async function sendWelcomeEmail({ toEmail, companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
 
   const html = `
-  <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
-      
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Welcome to Aervo</title>
+  </head>
+  <body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="background:radial-gradient(circle at top, #1d2a64 0, #020617 55%, #020617 100%); padding:32px 16px;">
       <tr>
-        <td style="padding:32px 40px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.05);">
-          <img src="https://aervoapp.com/logo.png" width="78" style="opacity:0.95;filter:drop-shadow(0 0 10px rgba(137,180,255,0.9))" alt="Aervo Logo">
-          <div style="font-size:13px;letter-spacing:4px;color:#8fbfff;margin-top:8px;">AERVO</div>
-        </td>
-      </tr>
+        <td align="center">
+          <!-- Outer card -->
+          <table width="600" cellspacing="0" cellpadding="0" style="max-width:600px; background:#020617; border-radius:24px; border:1px solid #1e293b; box-shadow:0 30px 80px rgba(15,23,42,0.75); overflow:hidden;">
+            <!-- Logo + chip -->
+            <tr>
+              <td style="padding:32px 32px 0 32px;" align="left">
+                <img src="https://aervoapp.com/assets/aervo-logo-email.png" alt="Aervo" style="height:28px; display:block; margin-bottom:20px;" />
+                <div style="display:inline-block; padding:4px 14px; border-radius:999px; border:1px solid #1f2937; background:rgba(15,23,42,0.85); color:#e5e7eb; font-size:12px; letter-spacing:0.06em; text-transform:uppercase;">
+  👋 Welcome aboard
+</div>
+              </td>
+            </tr>
 
-      <tr>
-        <td style="padding:40px 40px 20px;">
-          <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
-            Welcome to Aervo, ${companyName || "there"} 👋
-          </h1>
-          <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
-            We're excited to have you here. Aervo helps you understand your business faster with clear dashboards and simple AI insights you can act on.
-          </p>
-        </td>
-      </tr>
+            <!-- Hero section -->
+            <tr>
+              <td style="padding:20px 32px 4px 32px;" align="left">
+                <h1 style="margin:0 0 12px 0; font-size:28px; line-height:1.25; color:#f9fafb;">
+                  Welcome to Aervo${companyName ? `, <span style="color:#a5b4fc;">${companyName}</span>` : ""} 🌌
+                </h1>
+                <p style="margin:0; font-size:15px; line-height:1.6; color:#cbd5f5;">
+                  Your smart command center for the business just went live.
+                  Imagine the dashboard you saw on signup, powered by your real sales,
+                  customers, and inventory. That’s where we’re headed together.
+                </p>
+              </td>
+            </tr>
 
-      <tr>
-        <td style="padding:20px 40px;">
-          <div style="
-            border-radius:14px;
-            border:1px solid rgba(143,191,255,0.35);
-            background:radial-gradient(circle at top left,#1e2f55,#0a0f2b);
-            padding:24px 22px;
-            box-shadow:0 0 26px rgba(80,130,255,0.25);
-          ">
-            <h2 style="margin:0 0 10px;color:#e5ecff;font-size:18px;font-weight:500;">Your new command center</h2>
-            <p style="margin:0;color:#a6b3dd;font-size:14px;line-height:1.7;">
-              Track revenue, trends, products, and customer behavior all in one place.
-              Aervo shows you the story behind your numbers.
-            </p>
-            <ul style="margin:16px 0 0 20px;padding:0;color:#c2cff6;font-size:14px;line-height:1.8;">
-              <li>Clean dashboards that highlight what matters</li>
-              <li>Live performance insights at a glance</li>
-              <li>AI explanations you can understand instantly</li>
-            </ul>
-          </div>
-        </td>
-      </tr>
+            <!-- Three feature cards -->
+            <tr>
+              <td style="padding:24px 32px 16px 32px;">
+                <table width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <!-- Card 1 -->
+                    <td width="33.33%" valign="top" style="padding-right:8px;">
+                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
+                        <div style="font-size:24px; margin-bottom:6px;">📊</div>
+                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
+                          See your performance
+                        </div>
+                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
+                          Get a simple overview of sales and trends without digging through reports.
+                        </div>
+                      </div>
+                    </td>
 
-      <tr>
-        <td style="padding:10px 40px 32px;">
-          <a href="${appUrl}/dashboard.html"
-            style="
-              display:inline-block;
-              padding:12px 26px;
-              background:#1a243d;
-              border-radius:999px;
-              color:#b4cdff;
-              font-size:15px;
-              text-decoration:none;
-              box-shadow:0 0 18px rgba(137,180,255,0.6),0 0 40px rgba(80,130,255,0.4);
-            "
-          >
-            Open your dashboard
-          </a>
-        </td>
-      </tr>
+                    <!-- Card 2 -->
+                    <td width="33.33%" valign="top" style="padding:0 4px;">
+                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
+                        <div style="font-size:24px; margin-bottom:6px;">🤖</div>
+                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
+                          Ask Aervo anything
+                        </div>
+                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
+                          Ask natural questions like “How did we do this week?” and get clear answers in seconds.
+                        </div>
+                      </div>
+                    </td>
 
-      <tr>
-        <td style="padding:26px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);font-size:12px;color:#6c7598;">
-          You're receiving this email because you created an Aervo account.<br><br>
-          © ${new Date().getFullYear()} Aervo — All rights reserved.
+                    <!-- Card 3 -->
+                    <td width="33.33%" valign="top" style="padding-left:8px;">
+                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
+                        <div style="font-size:24px; margin-bottom:6px;">⚡</div>
+                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
+                          Spot what matters
+                        </div>
+                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
+                          See slowdowns, surprises, and opportunities before they become problems.
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- CTA -->
+            <tr>
+              <td style="padding:16px 32px 6px 32px;" align="left">
+                <p style="margin:0 0 14px 0; font-size:14px; line-height:1.5; color:#cbd5f5;">
+                  Whenever you’re ready, step back into your command center and start exploring your sample dashboard.
+                </p>
+                <table cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td>
+                      <a href="${appUrl}"
+                        style="display:inline-block; padding:12px 22px; border-radius:999px; background:linear-gradient(135deg,#4f46e5,#6366f1); color:#f9fafb; text-decoration:none; font-size:14px; font-weight:600; box-shadow:0 12px 30px rgba(79,70,229,0.45);">
+                        Go to your dashboard →
+                      </a>
+                    </td>
+                    <td style="padding-left:12px; font-size:13px; color:#6b7280;">
+                      or visit <a href="${appUrl}" style="color:#a5b4fc; text-decoration:none;">aervoapp.com</a> anytime.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Friendly footer -->
+            <tr>
+              <td style="padding:18px 32px 26px 32px; border-top:1px solid #111827;" align="left">
+                <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280;">
+                  You’re receiving this email because an Aervo workspace was created with this address.
+                </p>
+                <p style="margin:0; font-size:12px; color:#4b5563;">
+                  If this wasn’t you, please email support@aervoapp.com for further assistance.
+                <p style="margin:12px 0 0 0; font-size:11px; color:#374151;">
+                  © ${new Date().getFullYear()} Aervo. All rights reserved.
+                </p>
+              </td>
+            </tr>
+
+          </table>
         </td>
       </tr>
     </table>
-  </div>
+  </body>
+  </html>
   `;
 
   await sgMail.send({
     to: toEmail,
     from: process.env.SENDGRID_FROM_EMAIL,
-    subject: "Welcome to Aervo",
+    subject: "Welcome to Aervo 🎉 Your new command center is ready",
     html,
   });
 }
