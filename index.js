@@ -1,135 +1,112 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
+const crypto = require("crypto");
 
+// ================== SENDGRID SETUP ==================
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Welcome email helper
+async function sendWelcomeEmail(toEmail, companyName) {
+  const msg = {
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com
+    subject: "Welcome to Aervo",
+    html: `
+      <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
+          <tr>
+            <td style="padding:32px 40px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.05);">
+              <div style="font-size:13px;letter-spacing:4px;color:#8fbfff;margin-top:8px;">AERVO</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px 40px 20px;">
+              <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
+                Welcome to Aervo, ${companyName || "there"} 👋
+              </h1>
+              <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
+                Your dashboard is ready. You can log in any time at
+                <a href="https://aervoapp.com/login.html" style="color:#8fbfff;">aervoapp.com</a>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:26px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);font-size:12px;color:#6c7598;">
+              You're receiving this email because you created an Aervo account.<br><br>
+              © ${new Date().getFullYear()} Aervo — All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </div>
+    `,
+  };
+
+  await sgMail.send(msg);
+  console.log("Welcome email sent to", toEmail);
+}
+
+// Password reset email helper
+async function sendPasswordResetEmail(toEmail, token) {
+  const baseUrl =
+    process.env.FRONTEND_BASE_URL || "https://aervoapp.com"; // fallback
+
+  const resetUrl = `${baseUrl.replace(/\/+$/, "")}/reset-password.html?token=${encodeURIComponent(
+    token
+  )}`;
+
+  const msg = {
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL, // e.g. no-reply@aervoapp.com
+    subject: "Reset your Aervo password",
+    html: `
+      <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 16px;">
+        <h2 style="color: #111827;">Reset your Aervo password</h2>
+        <p>We received a request to reset the password for your Aervo account.</p>
+        <p>If you made this request, click the button below:</p>
+        <p>
+          <a href="${resetUrl}"
+             style="display:inline-block; padding: 10px 18px; background:#4f46e5; color:#ffffff; text-decoration:none; border-radius:999px;">
+            Reset password
+          </a>
+        </p>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style="word-break: break-all; color:#374151;">${resetUrl}</p>
+        <p>If you did not request this, you can ignore this email.</p>
+        <p style="margin-top:24px; font-size:12px; color:#6b7280;">&copy; ${new Date().getFullYear()} Aervo</p>
+      </div>
+    `,
+  };
+
+  await sgMail.send(msg);
+  console.log("Password reset email sent to", toEmail);
+}
+
+// ================== IN-MEMORY RESET TOKEN STORE ==================
+const passwordResetTokens = {}; // token -> { email, expiresAt }
+
+// ================== EXPRESS APP ==================
 const app = express();
 
-// ================== MIDDLEWARE ==================
 app.use(cors());
 app.use(express.json());
 
 // ================== POSTGRES POOL ==================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 // ================== JWT SECRET ==================
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
-
-// ================== EMAIL TRANSPORT (SMTP) ==================
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,              // e.g. smtp.gmail.com
-  port: Number(process.env.EMAIL_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,            // e.g. no-reply@aervoapp.com
-    pass: process.env.EMAIL_PASS,           // Gmail app password (no spaces)
-  },
-});
-
-// Optional: log if SMTP works (will show in Render logs)
-transporter.verify((err, success) => {
-  if (err) {
-    console.error("❌ SMTP connection FAILED:", err.message || err);
-  } else {
-    console.log("✅ SMTP connection OK as", process.env.EMAIL_USER);
-  }
-});
-
-// ================== WELCOME EMAIL HELPER ==================
-async function sendWelcomeEmail(toEmail, companyName) {
-  if (!process.env.EMAIL_FROM) {
-    console.warn("EMAIL_FROM not set — skipping welcome email.");
-    return;
-  }
-
-  const html = `
-  <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#0a0f2b;border-radius:14px;overflow:hidden;color:#d6def8;">
-      
-      <tr>
-        <td style="padding:32px 40px;text-align:center;background:#050817;border-bottom:1px solid rgba(255,255,255,0.05);">
-          <img src="https://aervoapp.com/logo.png" width="78" style="opacity:0.95;filter:drop-shadow(0 0 10px rgba(137,180,255,0.9))" alt="Aervo Logo">
-          <div style="font-size:13px;letter-spacing:4px;color:#8fbfff;margin-top:8px;">AERVO</div>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:40px 40px 20px;">
-          <h1 style="margin:0;font-size:26px;color:#e5ecff;font-weight:600;">
-            Welcome to Aervo, ${companyName || "there"} 👋
-          </h1>
-          <p style="margin:12px 0 0;font-size:15px;color:#9ca7d6;line-height:1.7;">
-            We're excited to have you here. Aervo helps you understand your business faster through clean dashboards, simple insights, and smart AI answers.
-          </p>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:20px 40px;">
-          <div style="
-            border-radius:14px;
-            border:1px solid rgba(143,191,255,0.35);
-            background:radial-gradient(circle at top left,#1e2f55,#0a0f2b);
-            padding:24px 22px;
-            box-shadow:0 0 26px rgba(80,130,255,0.25);
-          ">
-            <h2 style="margin:0 0 10px;color:#e5ecff;font-size:18px;font-weight:500;">Your new command center</h2>
-            <p style="margin:0;color:#a6b3dd;font-size:14px;line-height:1.7;">
-              Track revenue, trends, products, and customer behavior — all in one place.
-              Aervo shows you the story behind your numbers.
-            </p>
-            <ul style="margin:16px 0 0 20px;padding:0;color:#c2cff6;font-size:14px;line-height:1.8;">
-              <li>Clean dashboards that highlight what matters</li>
-              <li>Live performance insights at a glance</li>
-              <li>AI explanations you can understand instantly</li>
-            </ul>
-          </div>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:10px 40px 32px;">
-          <a href="https://aervoapp.com/dashboard.html"
-            style="
-              display:inline-block;
-              padding:12px 26px;
-              background:#1a243d;
-              border-radius:999px;
-              color:#b4cdff;
-              font-size:15px;
-              text-decoration:none;
-              box-shadow:0 0 18px rgba(137,180,255,0.6),0 0 40px rgba(80,130,255,0.4);
-            "
-          >
-            Open your dashboard
-          </a>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:26px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);font-size:12px;color:#6c7598;">
-          You're receiving this email because you created an Aervo account.<br><br>
-          © ${new Date().getFullYear()} Aervo — All rights reserved.
-        </td>
-      </tr>
-    </table>
-  </div>
-  `;
-
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,   // e.g. 'Aervo <no-reply@aervoapp.com>'
-    to: toEmail,
-    subject: "Welcome to Aervo",
-    html,
-  });
-}
 
 // ================== HEALTH CHECKS ==================
 app.get("/", (req, res) => {
@@ -156,14 +133,18 @@ app.get("/api/status", async (req, res) => {
 
 // ================== TEST EMAIL ENDPOINT ==================
 app.get("/api/test-email", async (req, res) => {
-  const to = req.query.to || process.env.TEST_EMAIL || process.env.EMAIL_USER;
+  const to = req.query.to || process.env.TEST_EMAIL || process.env.SENDGRID_FROM_EMAIL;
 
   try {
     await sendWelcomeEmail(to, "Aervo Test Company");
     res.json({ ok: true, message: `Test email sent to ${to}` });
   } catch (err) {
     console.error("Test email failed:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    const sgError =
+      err.response?.body?.errors?.[0]?.message ||
+      err.message ||
+      "Error sending test email.";
+    res.status(500).json({ ok: false, error: sgError });
   }
 });
 
@@ -233,7 +214,6 @@ app.post("/api/signup", async (req, res) => {
     sendWelcomeEmail(normalizedEmail, companyName).catch((err) => {
       console.error("Welcome email failed:", err);
     });
-
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
@@ -249,9 +229,10 @@ app.post("/api/login", async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email and password are required." });
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required.",
+      });
     }
 
     const normalizedEmail = email.toLowerCase();
@@ -262,20 +243,29 @@ app.post("/api/login", async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
     const user = result.rows[0];
 
+    // Compare password
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
+    // Record last_login
+    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [
+      user.id,
+    ]);
+
+    // Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
@@ -297,6 +287,115 @@ app.post("/api/login", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error during login.",
+    });
+  }
+});
+
+// ================== FORGOT PASSWORD ==================
+app.post("/api/forgot-password", async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Email is required." });
+  }
+
+  try {
+    const normalizedEmail = email.toLowerCase();
+
+    // Look up user by email
+    const result = await pool.query(
+      "SELECT id, email FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+
+    // Don't leak whether the email exists
+    if (result.rowCount === 0) {
+      return res.json({
+        success: true,
+        message: "If an account exists, we sent a reset link.",
+      });
+    }
+
+    const userEmail = result.rows[0].email;
+
+    // Generate token and store it in memory (demo)
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = Date.now() + 1000 * 60 * 60; // 1 hour
+
+    passwordResetTokens[token] = { email: userEmail, expiresAt };
+
+    // Send email via SendGrid helper
+    await sendPasswordResetEmail(userEmail, token);
+
+    return res.json({
+      success: true,
+      message: "If an account exists, we sent a reset link.",
+    });
+  } catch (err) {
+    console.error("Error in /api/forgot-password", err);
+
+    const sgError =
+      err.response?.body?.errors?.[0]?.message ||
+      err.message ||
+      "Something went wrong on the server.";
+
+    return res.status(500).json({
+      success: false,
+      message: sgError,
+    });
+  }
+});
+
+// ================== RESET PASSWORD ==================
+app.post("/api/reset-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    return res.status(400).json({
+      success: false,
+      message: "Token and new password are required.",
+    });
+  }
+
+  const record = passwordResetTokens[token];
+
+  if (!record) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid or expired reset link.",
+    });
+  }
+
+  if (record.expiresAt < Date.now()) {
+    delete passwordResetTokens[token];
+    return res.status(400).json({
+      success: false,
+      message: "Reset link has expired. Please request a new one.",
+    });
+  }
+
+  try {
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+      "UPDATE users SET password_hash = $1 WHERE email = $2",
+      [hashed, record.email.toLowerCase()]
+    );
+
+    // Kill the token so it can't be reused
+    delete passwordResetTokens[token];
+
+    return res.json({
+      success: true,
+      message: "Password updated. You can now log in.",
+    });
+  } catch (err) {
+    console.error("Error in /api/reset-password", err);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong.",
     });
   }
 });
