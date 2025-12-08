@@ -377,8 +377,7 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 });
-// ================== RESET PASSWORD ==================
-// ================== RESET PASSWORD ==================
+// ================== RESET PASSWORD (DB-backed) ==================
 app.post("/api/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
 
@@ -390,13 +389,12 @@ app.post("/api/reset-password", async (req, res) => {
   }
 
   try {
-    // Look up user by reset token and make sure it hasn't expired
+    // Look up user by reset token
     const result = await pool.query(
       `
-        SELECT id, email
-        FROM users
-        WHERE reset_token = $1
-          AND reset_token_expires > NOW()
+      SELECT id, email, reset_token_expires
+      FROM users
+      WHERE reset_token = $1
       `,
       [token]
     );
@@ -410,17 +408,25 @@ app.post("/api/reset-password", async (req, res) => {
 
     const user = result.rows[0];
 
-    // Hash the new password
+    // Check expiry
+    if (!user.reset_token_expires || user.reset_token_expires < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset link has expired. Please request a new one.",
+      });
+    }
+
+    // Hash new password
     const hashed = await bcrypt.hash(newPassword, 10);
 
-    // Update password and clear the reset token
+    // Update password and clear token
     await pool.query(
       `
-        UPDATE users
-        SET password_hash = $1,
-            reset_token = NULL,
-            reset_token_expires = NULL
-        WHERE id = $2
+      UPDATE users
+      SET password_hash = $1,
+          reset_token = NULL,
+          reset_token_expires = NULL
+      WHERE id = $2
       `,
       [hashed, user.id]
     );
@@ -433,7 +439,7 @@ app.post("/api/reset-password", async (req, res) => {
     console.error("Error in /api/reset-password", err);
     return res.status(500).json({
       success: false,
-      message: "Something went wrong.",
+      message: "Something went wrong on the server.",
     });
   }
 });
