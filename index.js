@@ -164,7 +164,7 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
                   <tr>
                     <td style="font-size:11px;color:#6b7280;line-height:1.6;">
                       You’re receiving this email because an Aervo workspace was created for <strong>${safeCompany}</strong>.
-                      If this wasn’t you, reply to this email and we’ll take a look.
+                      If this wasn’t you, please email support@aervo.com we’ll take a look.
                     </td>
                   </tr>
                   <tr><td style="height:6px;line-height:6px;font-size:0;">&nbsp;</td></tr>
