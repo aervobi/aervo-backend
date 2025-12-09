@@ -14,125 +14,126 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // ================== WELCOME EMAIL (AERVO THEME) ==================
 async function sendWelcomeEmail({ toEmail, companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+  const safeCompany = companyName || "your workspace";
 
   const html = `
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Welcome to Aervo</title>
-  </head>
-  <body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
-    <table width="100%" cellspacing="0" cellpadding="0" style="background:radial-gradient(circle at top, #1d2a64 0, #020617 55%, #020617 100%); padding:32px 16px;">
+  <div style="margin:0;padding:0;background:#02030a;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#02030a;padding:24px 0;">
       <tr>
         <td align="center">
-          <!-- Outer card -->
-          <table width="600" cellspacing="0" cellpadding="0" style="max-width:600px; background:#020617; border-radius:24px; border:1px solid #1e293b; box-shadow:0 30px 80px rgba(15,23,42,0.75); overflow:hidden;">
-            <!-- Logo + chip -->
+          <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:640px;border-radius:24px;background:#050819;border:1px solid rgba(124,92,255,0.25);overflow:hidden;">
+            
+            <!-- Header -->
             <tr>
-              <td style="padding:32px 32px 0 32px;" align="left">
-                <img src="https://aervoapp.com/assets/aervo-logo-email.png" alt="Aervo" style="height:28px; display:block; margin-bottom:20px;" />
-                <div style="display:inline-block; padding:4px 14px; border-radius:999px; border:1px solid #1f2937; background:rgba(15,23,42,0.85); color:#e5e7eb; font-size:12px; letter-spacing:0.06em; text-transform:uppercase;">
-  👋 Welcome aboard
-</div>
-              </td>
-            </tr>
-
-            <!-- Hero section -->
-            <tr>
-              <td style="padding:20px 32px 4px 32px;" align="left">
-                <h1 style="margin:0 0 12px 0; font-size:28px; line-height:1.25; color:#f9fafb;">
-                  Welcome to Aervo${companyName ? `, <span style="color:#a5b4fc;">${companyName}</span>` : ""} 🌌
-                </h1>
-                <p style="margin:0; font-size:15px; line-height:1.6; color:#cbd5f5;">
-                  Your smart command center for the business just went live.
-                  Imagine the dashboard you saw on signup, powered by your real sales,
-                  customers, and inventory. That’s where we’re headed together.
-                </p>
-              </td>
-            </tr>
-
-            <!-- Three feature cards -->
-            <tr>
-              <td style="padding:24px 32px 16px 32px;">
-                <table width="100%" cellspacing="0" cellpadding="0">
+              <td style="padding:20px 24px 8px 24px;background:radial-gradient(circle at top,#1d2247 0,#050819 55%);">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
                   <tr>
-                    <!-- Card 1 -->
-                    <td width="33.33%" valign="top" style="padding-right:8px;">
-                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
-                        <div style="font-size:24px; margin-bottom:6px;">📊</div>
-                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
-                          See your performance
-                        </div>
-                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
-                          Get a simple overview of sales and trends without digging through reports.
-                        </div>
-                      </div>
+                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#a0a3b8;letter-spacing:0.18em;text-transform:uppercase;">
+                      Welcome to Aervo
                     </td>
-
-                    <!-- Card 2 -->
-                    <td width="33.33%" valign="top" style="padding:0 4px;">
-                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
-                        <div style="font-size:24px; margin-bottom:6px;">🤖</div>
-                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
-                          Ask Aervo anything
-                        </div>
-                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
-                          Ask natural questions like “How did we do this week?” and get clear answers in seconds.
-                        </div>
-                      </div>
+                  </tr>
+                  <tr><td style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
+                  <tr>
+                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:24px;font-weight:700;color:#f7f7ff;">
+                      Welcome aboard, ${safeCompany}.
                     </td>
-
-                    <!-- Card 3 -->
-                    <td width="33.33%" valign="top" style="padding-left:8px;">
-                      <div style="border-radius:18px; background:linear-gradient(135deg, #020617 0%, #020617 45%, #111827 100%); border:1px solid #1f2937; padding:16px 14px; height:100%;">
-                        <div style="font-size:24px; margin-bottom:6px;">⚡</div>
-                        <div style="font-size:14px; font-weight:600; color:#e5e7eb; margin-bottom:4px;">
-                          Spot what matters
-                        </div>
-                        <div style="font-size:13px; line-height:1.5; color:#9ca3af;">
-                          See slowdowns, surprises, and opportunities before they become problems.
-                        </div>
-                      </div>
+                  </tr>
+                  <tr><td style="height:6px;line-height:6px;font-size:0;">&nbsp;</td></tr>
+                  <tr>
+                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#c2c5d8;max-width:480px;">
+                      Your Aervo command center for the business just went live. Right now you’re seeing a sample dashboard. Next time you sign in, we’ll help you make it look and feel like your real business.
                     </td>
                   </tr>
                 </table>
               </td>
             </tr>
 
-            <!-- CTA -->
+            <!-- Divider -->
             <tr>
-              <td style="padding:16px 32px 6px 32px;" align="left">
-                <p style="margin:0 0 14px 0; font-size:14px; line-height:1.5; color:#cbd5f5;">
-                  Whenever you’re ready, step back into your command center and start exploring your sample dashboard.
-                </p>
-                <table cellspacing="0" cellpadding="0">
+              <td style="padding:0 24px;">
+                <hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:12px 0 16px 0;" />
+              </td>
+            </tr>
+
+            <!-- What you can do next -->
+            <tr>
+              <td style="padding:0 24px 4px 24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
                   <tr>
-                    <td>
-                      <a href="${appUrl}"
-                        style="display:inline-block; padding:12px 22px; border-radius:999px; background:linear-gradient(135deg,#4f46e5,#6366f1); color:#f9fafb; text-decoration:none; font-size:14px; font-weight:600; box-shadow:0 12px 30px rgba(79,70,229,0.45);">
-                        Go to your dashboard →
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;font-weight:600;color:#f7f7ff;padding-bottom:6px;">
+                      Here’s what you can do next:
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#c2c5d8;">
+                      <ol style="margin:0;padding-left:18px;">
+                        <li style="margin-bottom:6px;">
+                          <strong>Open your sample dashboard.</strong>
+                          See how Aervo highlights what’s working and what needs attention.
+                        </li>
+                        <li style="margin-bottom:6px;">
+                          <strong>Connect your real tools.</strong>
+                          Link the apps you already use so your insights match your actual store.
+                        </li>
+                        <li>
+                          <strong>Ask Aervo questions in plain language.</strong>
+                          Try “How did we do this week?” or “What should I fix first?” and get short, clear answers.
+                        </li>
+                      </ol>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- CTA button -->
+            <tr>
+              <td align="left" style="padding:20px 24px 8px 24px;">
+                <table cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td align="center" bgcolor="#29c8ff" style="border-radius:999px;background-image:linear-gradient(90deg,#29c8ff,#7c5cff);">
+                      <a href="${appUrl}/login.html"
+                         style="display:inline-block;padding:11px 28px;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;font-weight:600;color:#050816;text-decoration:none;">
+                        Go to your dashboard
                       </a>
                     </td>
-                    <td style="padding-left:12px; font-size:13px; color:#6b7280;">
-                      or visit <a href="${appUrl}" style="color:#a5b4fc; text-decoration:none;">aervoapp.com</a> anytime.
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Reassurance / footer copy -->
+            <tr>
+              <td style="padding:4px 24px 20px 24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#a0a3b8;">
+                      You can always return to Aervo at
+                      <a href="${appUrl}" style="color:#8fb5ff;text-decoration:none;">aervoapp.com</a>.
+                      If something doesn’t look right, just reply to this email and we’ll take a look with you.
                     </td>
                   </tr>
                 </table>
               </td>
             </tr>
 
-            <!-- Friendly footer -->
             <tr>
-              <td style="padding:18px 32px 26px 32px; border-top:1px solid #111827;" align="left">
-                <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280;">
-                  You’re receiving this email because an Aervo workspace was created with this address.
-                </p>
-                <p style="margin:0; font-size:12px; color:#4b5563;">
-                  If this wasn’t you, please email support@aervoapp.com for further assistance.
-                <p style="margin:12px 0 0 0; font-size:11px; color:#374151;">
-                  © ${new Date().getFullYear()} Aervo. All rights reserved.
-                </p>
+              <td style="padding:12px 24px 18px 24px;border-top:1px solid rgba(255,255,255,0.06);background:#040612;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#6b7280;">
+                      You’re receiving this because an Aervo workspace was created with this address.
+                      If this wasn’t you, please email
+                      <a href="mailto:support@aervoapp.com" style="color:#8fb5ff;text-decoration:none;">support@aervoapp.com</a>.
+                    </td>
+                  </tr>
+                  <tr><td style="height:6px;line-height:6px;font-size:0;">&nbsp;</td></tr>
+                  <tr>
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#4b5563;">
+                      © ${new Date().getFullYear()} Aervo. All rights reserved.
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
 
@@ -140,9 +141,16 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
         </td>
       </tr>
     </table>
-  </body>
-  </html>
+  </div>
   `;
+
+  await sgMail.send({
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL,
+    subject: `Welcome to Aervo, ${safeCompany}`,
+    html,
+  });
+}
 
   await sgMail.send({
     to: toEmail,
