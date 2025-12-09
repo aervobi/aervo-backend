@@ -151,24 +151,6 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     html,
   });
 }
-// Helper: Aervo-styled Reset Password Email
-async function sendPasswordResetEmail(…
-
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo, ${safeCompany}`,
-    html,
-  });
-}
-
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: "Welcome to Aervo 🎉 Your new command center is ready",
-    html,
-  });
-}
 
 // Helper: Aervo-styled Reset Password Email
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
