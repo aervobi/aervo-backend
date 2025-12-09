@@ -11,7 +11,7 @@ const crypto = require("crypto");
 // ============= SENDGRID SETUP =============
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Simple helper to guess how to talk about the business in the email
+// ============= SMALL HELPER: BUSINESS TYPE =============
 function inferBusinessType(companyName = "") {
   const n = companyName.toLowerCase();
 
@@ -192,15 +192,7 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
   });
 }
 
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo, ${safeCompany}`,
-    html,
-  });
-}
-
-// Helper: Aervo-styled Reset Password Email
+// ============= RESET PASSWORD EMAIL (AERVO THEME) =============
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
   const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
   const cleanBase = baseUrl.replace(/\/+$/, "");
@@ -345,7 +337,7 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
-// Quick test endpoint for email
+// Quick test endpoint for welcome email
 app.get("/api/test-email", async (req, res) => {
   const to = req.query.to || process.env.TEST_EMAIL;
 
@@ -353,7 +345,6 @@ app.get("/api/test-email", async (req, res) => {
     await sendWelcomeEmail({
       toEmail: to,
       companyName: "Aervo Test Company",
-      userRole: "Owner",
     });
     res.json({ ok: true, message: `Test welcome email sent to ${to}` });
   } catch (err) {
@@ -424,11 +415,10 @@ app.post("/api/signup", async (req, res) => {
       },
     });
 
-    // 6) Send Aervo Welcome Email (new HTML design) in background
+    // 6) Send welcome email in background
     sendWelcomeEmail({
       toEmail: normalizedEmail,
       companyName,
-      userRole: user.role,
     }).catch((err) => console.error("Welcome email failed:", err));
   } catch (err) {
     console.error("Signup error:", err);
