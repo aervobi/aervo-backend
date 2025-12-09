@@ -22,25 +22,25 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
       <tr>
         <td align="center">
           <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:640px;border-radius:24px;background:#050819;border:1px solid rgba(124,92,255,0.25);overflow:hidden;">
-            
+
             <!-- Header -->
             <tr>
               <td style="padding:20px 24px 8px 24px;background:radial-gradient(circle at top,#1d2247 0,#050819 55%);">
                 <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
                   <tr>
-                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#a0a3b8;letter-spacing:0.18em;text-transform:uppercase;">
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#a0a3b8;letter-spacing:0.18em;text-transform:uppercase;">
                       Welcome to Aervo
                     </td>
                   </tr>
                   <tr><td style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
                   <tr>
-                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:24px;font-weight:700;color:#f7f7ff;">
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:24px;font-weight:700;color:#f7f7ff;">
                       Welcome aboard, ${safeCompany}.
                     </td>
                   </tr>
                   <tr><td style="height:6px;line-height:6px;font-size:0;">&nbsp;</td></tr>
                   <tr>
-                    <td align="left" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#c2c5d8;max-width:480px;">
+                    <td style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;color:#c2c5d8;max-width:480px;">
                       Your Aervo command center for the business just went live. Right now you’re seeing a sample dashboard. Next time you sign in, we’ll help you make it look and feel like your real business.
                     </td>
                   </tr>
@@ -102,7 +102,7 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
               </td>
             </tr>
 
-            <!-- Reassurance / footer copy -->
+            <!-- Footer copy -->
             <tr>
               <td style="padding:4px 24px 20px 24px;">
                 <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
@@ -143,6 +143,16 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     </table>
   </div>
   `;
+
+  await sgMail.send({
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL,
+    subject: `Welcome to Aervo, ${safeCompany}`,
+    html,
+  });
+}
+// Helper: Aervo-styled Reset Password Email
+async function sendPasswordResetEmail(…
 
   await sgMail.send({
     to: toEmail,
