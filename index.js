@@ -244,7 +244,7 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     subject: `Welcome to Aervo${companyName ? ", " + companyName : ""}`,
     html,
   });
-}
+
 
 // ============= RESET PASSWORD EMAIL =============
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
