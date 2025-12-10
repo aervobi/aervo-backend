@@ -11,7 +11,7 @@ const crypto = require("crypto");
 // ============= SENDGRID SETUP =============
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ============= WELCOME EMAIL =============
+// ================== WELCOME EMAIL (AERVO THEME) ==================
 async function sendWelcomeEmail({ toEmail, companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
 
@@ -22,142 +22,221 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     <meta charset="UTF-8" />
     <title>Welcome to Aervo</title>
   </head>
-  <body style="margin:0;padding:0;background:#020617;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
+    <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px; background:#020617;">
+      <tr>
+        <td align="center">
+          <!-- Outer card -->
+          <table width="600" cellspacing="0" cellpadding="0" style="
+            max-width:600px;
+            background:#020617;
+            border-radius:24px;
+            border:1px solid #111827;
+            box-shadow:0 30px 80px rgba(15,23,42,0.75);
+            overflow:hidden;
+          ">
+            <!-- Hero / title area (with ghost bird) -->
+            <tr>
+              <td style="
+                padding:24px 32px 18px;
+                background:#020617;
+                position:relative;
+              " align="left">
 
-    <div style="padding:32px 16px;background:#020617;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:0 auto;border-radius:20px;overflow:hidden;background:#020617;border:1px solid #111827;">
-        <!-- HERO HEADER WITH BIRD -->
-        <tr>
-          <td style="padding:32px; background:#020617; position:relative;">
+                <!-- BIG ghost bird in the top-right, behind text -->
+                <div style="
+                  position:absolute;
+                  top:-24px;
+                  right:16px;
+                  opacity:0.06;
+                  pointer-events:none;
+                ">
+                  <img src="https://aervoapp.com/logo.png"
+                       alt=""
+                       width="180"
+                       style="display:block; max-width:180px;" />
+                </div>
 
-            <!-- Big bird behind text -->
-            <img
-              src="https://aervoapp.com/logo.png"
-              alt="Aervo"
-              style="
-                position:absolute;
-                right:28px;
-                top:20px;
-                height:110px;
-                opacity:0.12;
-                pointer-events:none;
-              "
-            />
+                <!-- Small text label instead of logo row -->
+                <div style="
+                  font-size:11px;
+                  letter-spacing:0.18em;
+                  text-transform:uppercase;
+                  color:#6b7280;
+                  margin-bottom:6px;
+                ">
+                  AERVO
+                </div>
 
-            <!-- Foreground content -->
-            <div style="position:relative; z-index:2;">
-              <!-- Small brand row -->
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;">
-                <img src="https://aervoapp.com/logo.png" alt="Aervo" style="height:26px;display:block;" />
-                <span style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#9ca3af;">
-                  Aervo
-                </span>
-              </div>
+                <!-- Main welcome headline moved up -->
+                <h1 style="
+                  margin:0 0 10px 0;
+                  font-size:26px;
+                  line-height:1.3;
+                  color:#f9fafb;
+                  font-weight:650;
+                ">
+                  Welcome aboard, ${companyName || "there"} 👋
+                </h1>
 
-              <h1 style="margin:0 0 10px;font-size:26px;line-height:1.3;color:#f9fafb;">
-                Welcome aboard${companyName ? `, ${companyName}` : ""} 👋
-              </h1>
+                <p style="
+                  margin:0;
+                  font-size:14px;
+                  line-height:1.7;
+                  color:#cbd5f5;
+                ">
+                  You just spun up a new command center for your business.
+                  Aervo pulls your sales, inventory, and customer signals
+                  into one clear view so you can see what's working and what
+                  needs attention in seconds.
+                </p>
+              </td>
+            </tr>
 
-              <p style="margin:0;font-size:14px;line-height:1.7;color:#cbd5f5;">
-                You just spun up a new command center for your business. Aervo pulls your sales,
-                inventory, and customer signals into one clear view so you can see what's working
-                and what needs attention in seconds.
-              </p>
-            </div>
-          </td>
-        </tr>
+            <!-- What Aervo helps you do -->
+            <tr>
+              <td style="padding:18px 32px 10px 32px;">
+                <p style="
+                  margin:0 0 8px;
+                  font-size:14px;
+                  font-weight:600;
+                  color:#e5e7eb;
+                ">
+                  Here’s what Aervo is built to help you do:
+                </p>
+                <ul style="
+                  margin:0;
+                  padding-left:18px;
+                  font-size:13px;
+                  line-height:1.7;
+                  color:#d1d5db;
+                ">
+                  <li>
+                    <strong>See today at a glance</strong> – one live dashboard instead of ten tabs.
+                  </li>
+                  <li>
+                    <strong>Ask natural questions</strong> – “How did we do this week?” or “What changed?”
+                    and get clear answers.
+                  </li>
+                  <li>
+                    <strong>Catch slowdowns early</strong> – spot dips in sales or low stock before they hurt you.
+                  </li>
+                </ul>
+              </td>
+            </tr>
 
-        <!-- VALUE + FEATURE CARDS -->
-        <tr>
-          <td style="padding:26px 32px 24px 32px;background:#020617;">
-            <h2 style="margin:0 0 12px;font-size:17px;color:#f9fafb;">
-              Here’s what Aervo is built to help you do:
-            </h2>
+            <!-- 3 feature cards -->
+            <tr>
+              <td style="padding:10px 32px 20px 32px;">
+                <table width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <!-- Card 1 -->
+                    <td width="33.33%" valign="top" style="padding-right:8px;">
+                      <div style="
+                        border-radius:16px;
+                        background:#050816;
+                        border:1px solid #111827;
+                        padding:14px 12px;
+                      ">
+                        <div style="font-size:22px; margin-bottom:6px;">📊</div>
+                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                          Live overview
+                        </div>
+                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                          Sales, inventory, and key metrics in one place.
+                        </div>
+                      </div>
+                    </td>
 
-            <ul style="margin:0 0 18px 0;padding-left:18px;font-size:14px;line-height:1.7;color:#cbd5e1;">
-              <li><strong>See today at a glance</strong> – one live dashboard instead of ten tabs.</li>
-              <li><strong>Ask natural questions</strong> – “How did we do this week?” or “What changed?”</li>
-              <li><strong>Catch slowdowns early</strong> – spot dips in sales or low stock before they hurt you.</li>
-            </ul>
+                    <!-- Card 2 -->
+                    <td width="33.33%" valign="top" style="padding:0 4px;">
+                      <div style="
+                        border-radius:16px;
+                        background:#050816;
+                        border:1px solid #111827;
+                        padding:14px 12px;
+                      ">
+                        <div style="font-size:22px; margin-bottom:6px;">💬</div>
+                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                          Explain the “why”
+                        </div>
+                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                          Short explanations, not just charts and numbers.
+                        </div>
+                      </div>
+                    </td>
 
-            <!-- 3 feature cards in a row -->
-            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
-              <tr>
-                <td width="33.33%" style="padding-right:8px;">
-                  <div style="border-radius:16px;background:#020617;border:1px solid #111827;padding:14px 12px;">
-                    <div style="font-size:22px;margin-bottom:4px;">📊</div>
-                    <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:3px;">
-                      Live overview
-                    </div>
-                    <div style="font-size:12px;color:#9ca3af;line-height:1.5;">
-                      Sales, inventory, and key metrics in one place.
-                    </div>
-                  </div>
-                </td>
-
-                <td width="33.33%" style="padding:0 4px;">
-                  <div style="border-radius:16px;background:#020617;border:1px solid #111827;padding:14px 12px;">
-                    <div style="font-size:22px;margin-bottom:4px;">💬</div>
-                    <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:3px;">
-                      Explain the “why”
-                    </div>
-                    <div style="font-size:12px;color:#9ca3af;line-height:1.5;">
-                      Short explanations, not just charts and numbers.
-                    </div>
-                  </div>
-                </td>
-
-                <td width="33.33%" style="padding-left:8px;">
-                  <div style="border-radius:16px;background:#020617;border:1px solid #111827;padding:14px 12px;">
-                    <div style="font-size:22px;margin-bottom:4px;">⚡</div>
-                    <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:3px;">
-                      Next best steps
-                    </div>
-                    <div style="font-size:12px;color:#9ca3af;line-height:1.5;">
-                      Suggestions you can act on today to move the needle.
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            </table>
+                    <!-- Card 3 -->
+                    <td width="33.33%" valign="top" style="padding-left:8px;">
+                      <div style="
+                        border-radius:16px;
+                        background:#050816;
+                        border:1px solid #111827;
+                        padding:14px 12px;
+                      ">
+                        <div style="font-size:22px; margin-bottom:6px;">⚡</div>
+                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                          Next best steps
+                        </div>
+                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                          Suggestions you can act on today to move the needle.
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
 
             <!-- CTA -->
-            <a
-              href="${appUrl}"
-              style="
-                display:inline-block;
-                padding:12px 24px;
-                border-radius:999px;
-                background:linear-gradient(135deg,#29c8ff,#7c5cff);
-                color:#050816;
-                text-decoration:none;
-                font-size:14px;
-                font-weight:600;
-                box-shadow:0 0 18px rgba(41,200,255,0.45),0 0 32px rgba(124,92,255,0.35);
-              "
-            >
-              Open your Aervo dashboard →
-            </a>
-          </td>
-        </tr>
+            <tr>
+              <td style="padding:4px 32px 26px 32px;" align="left">
+                <a href="${appUrl}" style="
+                  display:inline-block;
+                  padding:12px 24px;
+                  border-radius:999px;
+                  background:linear-gradient(135deg,#4f46e5,#6366f1);
+                  color:#f9fafb;
+                  text-decoration:none;
+                  font-size:14px;
+                  font-weight:600;
+                  box-shadow:0 14px 32px rgba(79,70,229,0.5);
+                ">
+                  Open your Aervo dashboard →
+                </a>
+              </td>
+            </tr>
 
-        <!-- FOOTER -->
-        <tr>
-          <td style="padding:18px 32px 22px 32px;background:#020617;border-top:1px solid #111827;text-align:center;">
-            <p style="margin:0 0 4px;font-size:11px;color:#6b7280;">
-              You’re receiving this because an Aervo workspace was created for ${companyName || "your business"}.
-            </p>
-            <p style="margin:0;font-size:11px;color:#4b5563;">
-              © ${new Date().getFullYear()} Aervo. All rights reserved.
-            </p>
-          </td>
-        </tr>
-      </table>
-    </div>
+            <!-- Footer -->
+            <tr>
+              <td style="
+                padding:14px 32px 20px 32px;
+                border-top:1px solid #111827;
+                font-size:11px;
+                color:#6b7280;
+              ">
+                You’re receiving this because an Aervo workspace was created for ${companyName || "your business"}.
+                If this wasn’t you, reply to this email and we’ll take a look.
+                <br /><br />
+                © ${new Date().getFullYear()} Aervo. All rights reserved.
+              </td>
+            </tr>
 
+          </table>
+        </td>
+      </tr>
+    </table>
   </body>
   </html>
   `;
+
+  await sgMail.send({
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL,
+    subject: `Welcome to Aervo, ${companyName || "there"}`,
+    html,
+  });
+}
 
   await sgMail.send({
     to: toEmail,
