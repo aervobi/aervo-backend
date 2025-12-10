@@ -238,14 +238,6 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
   });
 }
 
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo${companyName ? ", " + companyName : ""}`,
-    html,
-  });
-
-
 // ============= RESET PASSWORD EMAIL =============
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
   const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
