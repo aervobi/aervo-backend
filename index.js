@@ -11,34 +11,9 @@ const crypto = require("crypto");
 // ============= SENDGRID SETUP =============
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ============= SMALL HELPER: BUSINESS TYPE =============
-function inferBusinessType(companyName = "") {
-  const n = companyName.toLowerCase();
-
-  if (n.includes("coffee") || n.includes("café") || n.includes("cafe")) {
-    return "coffee shop";
-  }
-  if (n.includes("shop") || n.includes("store") || n.includes("boutique")) {
-    return "store";
-  }
-  if (n.includes("agency") || n.includes("studio")) {
-    return "agency";
-  }
-  if (n.includes("barber") || n.includes("salon")) {
-    return "salon";
-  }
-  if (n.includes("co.") || n.includes("company") || n.includes("inc")) {
-    return "business";
-  }
-
-  return "business";
-}
-
-// ================== WELCOME EMAIL (BOLD, BIRD HERO, STORY INTRO) ==================
+// ============= WELCOME EMAIL =============
 async function sendWelcomeEmail({ toEmail, companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-
-  const safeCompany = companyName || "your business";
 
   const html = `
   <!DOCTYPE html>
@@ -47,189 +22,76 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     <meta charset="UTF-8" />
     <title>Welcome to Aervo</title>
   </head>
-  <body style="margin:0; padding:0; background:#020617; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#020617; padding:32px 0;">
-      <tr>
-        <td align="center">
-          <!-- Outer card -->
-          <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px; background:#020617; border-radius:24px; overflow:hidden; box-shadow:0 26px 80px rgba(15,23,42,0.85); border:1px solid #111827;">
-            
-            <!-- HERO WITH BIRD BACKGROUND -->
-            <tr>
-              <td style="
-                padding:32px 32px 26px;
-                background:
-                  radial-gradient(circle at top left, #38bdf8 0, transparent 55%),
-                  radial-gradient(circle at top right, #4f46e5 0, transparent 60%),
-                  radial-gradient(circle at bottom, #0f172a 0, #020617 65%);
-                color:#f9fafb;
-                position:relative;
-              ">
+  <body style="margin:0; padding:0; background:#020617; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  
+    <div style="max-width:680px;margin:0 auto;background:#020617;border-radius:20px;overflow:hidden;
+      background-image:url('https://aervoapp.com/bird-bg.png');background-size:cover;background-position:center;">
+      
+      <div style="padding:40px 32px;background:rgba(0,0,0,0.55);">
+        <img src="https://aervoapp.com/assets/aervo-logo-email.png" alt="Aervo" style="height:32px;margin-bottom:20px;" />
 
-                <!-- ghost bird in the background -->
-                <div style="
-                  position:absolute;
-                  right:18px;
-                  top:18px;
-                  width:140px;
-                  opacity:0.16;
-                  filter:drop-shadow(0 0 22px rgba(129,140,248,0.85));
-                ">
-                  <img src="https://aervoapp.com/logo.png" alt="" style="width:100%; display:block;" />
-                </div>
+        <h1 style="color:#fff;margin:0;font-size:28px;line-height:1.3;">
+          Welcome aboard${companyName ? `, ${companyName}` : ""} 👋
+        </h1>
 
-                <!-- Aervo tiny logo + wordmark -->
-                <div style="position:relative; z-index:2; margin-bottom:18px;">
-                  <div style="font-size:11px; letter-spacing:0.22em; text-transform:uppercase; color:#d1d5db;">
-                    AERVO
-                  </div>
-                </div>
+        <p style="color:#d1d5db;font-size:15px;line-height:1.6;margin:16px 0;">
+          You just spun up a new command center for your business. Aervo pulls your sales,
+          inventory, and customer signals into one clear view so you can see what's working
+          and what needs attention in seconds.
+        </p>
+      </div>
 
-                <!-- Story-style intro -->
-                <div style="position:relative; z-index:2;">
-                  <h1 style="margin:0 0 10px; font-size:26px; line-height:1.3; font-weight:650;">
-                    Hi ${safeCompany}, welcome to Aervo 👋
-                  </h1>
-                  <p style="margin:0 0 10px; font-size:14px; line-height:1.7; color:#e5e7eb;">
-                    Most days, running ${safeCompany.toLowerCase()} means juggling tabs, spreadsheets, and gut feeling.
-                  </p>
-                  <p style="margin:0; font-size:14px; line-height:1.7; color:#e5e7eb;">
-                    Aervo is here to give you a higher view: one place where sales, inventory, and customer signals come together so you can see what’s working and what needs attention in seconds.
-                  </p>
-                </div>
-              </td>
-            </tr>
+      <div style="padding:32px;background:#0b1120;">
+        <h2 style="color:#fff;font-size:18px;margin:0 0 12px 0;">Here’s what Aervo helps you do:</h2>
 
-            <!-- WHAT AERVO IS BUILT TO DO -->
-            <tr>
-              <td style="padding:22px 32px 10px; background:#020617;">
-                <p style="margin:0 0 10px; font-size:13px; letter-spacing:0.08em; text-transform:uppercase; color:#9ca3af; font-weight:600;">
-                  Here’s what Aervo is built to help you do:
-                </p>
-                <ul style="margin:0 0 6px 18px; padding:0; font-size:14px; line-height:1.7; color:#e5e7eb;">
-                  <li style="margin-bottom:4px;">
-                    <strong>See today at a glance</strong> – one live view instead of ten different tabs.
-                  </li>
-                  <li style="margin-bottom:4px;">
-                    <strong>Ask plain-language questions</strong> – like “How did we do this week?” or “What changed in online orders?” and get clear answers.
-                  </li>
-                  <li>
-                    <strong>Spot slowdowns early</strong> – catch dips in sales, low stock, or rising returns before they turn into bigger problems.
-                  </li>
-                </ul>
-              </td>
-            </tr>
+        <ul style="color:#cbd5e1;font-size:14px;line-height:1.7;padding-left:20px;margin:0;">
+          <li><strong>See today at a glance</strong> — one live dashboard instead of ten tabs.</li>
+          <li><strong>Ask natural questions</strong> — like “How did we do this week?” and get instant answers.</li>
+          <li><strong>Catch slowdowns early</strong> — see dips in sales or low stock before they become problems.</li>
+        </ul>
 
-            <!-- FEATURE CARDS ROW -->
-            <tr>
-              <td style="padding:10px 24px 6px; background:#020617;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <!-- Card 1 -->
-                    <td width="33.33%" valign="top" style="padding:8px;">
-                      <div style="
-                        border-radius:18px;
-                        background:linear-gradient(145deg,#020617,#020617 45%,#0b1120 100%);
-                        border:1px solid rgba(148,163,184,0.5);
-                        padding:14px 12px;
-                        height:100%;
-                      ">
-                        <div style="font-size:20px; margin-bottom:6px;">📈</div>
-                        <div style="font-size:13px; font-weight:600; color:#f9fafb; margin-bottom:4px;">
-                          Live overview
-                        </div>
-                        <div style="font-size:12px; line-height:1.6; color:#9ca3af;">
-                          See key sales, inventory, and customer metrics in one clean place.
-                        </div>
-                      </div>
-                    </td>
+        <div style="display:flex;gap:12px;margin-top:26px;">
+          <div style="flex:1;background:#111827;padding:18px;border-radius:16px;border:1px solid #1f2937;">
+            <div style="font-size:24px;margin-bottom:6px;">📊</div>
+            <strong style="color:#fff;font-size:14px;">Live overview</strong>
+            <p style="color:#9ca3af;font-size:13px;margin:6px 0 0;">
+              Sales, inventory, and key metrics in one place.
+            </p>
+          </div>
 
-                    <!-- Card 2 -->
-                    <td width="33.33%" valign="top" style="padding:8px;">
-                      <div style="
-                        border-radius:18px;
-                        background:linear-gradient(145deg,#020617,#020617 45%,#111827 100%);
-                        border:1px solid rgba(96,165,250,0.6);
-                        padding:14px 12px;
-                        height:100%;
-                      ">
-                        <div style="font-size:20px; margin-bottom:6px;">🤖</div>
-                        <div style="font-size:13px; font-weight:600; color:#f9fafb; margin-bottom:4px;">
-                          Explain the “why”
-                        </div>
-                        <div style="font-size:12px; line-height:1.6; color:#9ca3af;">
-                          Get short explanations instead of raw charts, so you know what changed and why.
-                        </div>
-                      </div>
-                    </td>
+          <div style="flex:1;background:#111827;padding:18px;border-radius:16px;border:1px solid #1f2937;">
+            <div style="font-size:24px;margin-bottom:6px;">💬</div>
+            <strong style="color:#fff;font-size:14px;">Explain the “why”</strong>
+            <p style="color:#9ca3af;font-size:13px;margin:6px 0 0;">
+              Short explanations, not just numbers.
+            </p>
+          </div>
 
-                    <!-- Card 3 -->
-                    <td width="33.33%" valign="top" style="padding:8px;">
-                      <div style="
-                        border-radius:18px;
-                        background:linear-gradient(145deg,#020617,#020617 45%,#111827 100%);
-                        border:1px solid rgba(244,114,182,0.6);
-                        padding:14px 12px;
-                        height:100%;
-                      ">
-                        <div style="font-size:20px; margin-bottom:6px;">⚡</div>
-                        <div style="font-size:13px; font-weight:600; color:#f9fafb; margin-bottom:4px;">
-                          Next best steps
-                        </div>
-                        <div style="font-size:12px; line-height:1.6; color:#9ca3af;">
-                          Get suggestions you can act on today to keep things moving in the right direction.
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
+          <div style="flex:1;background:#111827;padding:18px;border-radius:16px;border:1px solid #1f2937;">
+            <div style="font-size:24px;margin-bottom:6px;">⚡</div>
+            <strong style="color:#fff;font-size:14px;">Next best steps</strong>
+            <p style="color:#9ca3af;font-size:13px;margin:6px 0 0;">
+              Actions you can take today to move the needle.
+            </p>
+          </div>
+        </div>
 
-            <!-- CTA -->
-            <tr>
-              <td style="padding:10px 32px 22px; background:#020617;">
-                <p style="margin:0 0 14px; font-size:14px; line-height:1.6; color:#d1d5db;">
-                  When you’re ready, jump back into your Aervo dashboard and explore the sample view we’ve set up for you.
-                </p>
-                <table role="presentation" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td>
-                      <a href="${appUrl}"
-                        style="display:inline-block; padding:12px 26px; border-radius:999px;
-                               background:linear-gradient(135deg,#38bdf8,#6366f1,#f97316);
-                               color:#0b1020; font-size:14px; font-weight:700; text-decoration:none;
-                               box-shadow:0 16px 40px rgba(56,189,248,0.45);">
-                        Open your Aervo dashboard →
-                      </a>
-                    </td>
-                    <td style="padding-left:12px; font-size:12px; color:#9ca3af;">
-                      or visit <a href="${appUrl}" style="color:#93c5fd; text-decoration:none;">aervoapp.com</a> anytime.
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
+        <div style="margin-top:28px;">
+          <a href="${appUrl}"
+            style="display:inline-block;padding:14px 26px;border-radius:999px;
+              background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;text-decoration:none;
+              font-size:15px;font-weight:600;box-shadow:0 12px 32px rgba(79,70,229,0.4);">
+            Open your Aervo dashboard →
+          </a>
+        </div>
+      </div>
 
-            <!-- FOOTER -->
-            <tr>
-              <td style="padding:16px 32px 22px; background:#020617; border-top:1px solid #111827; font-size:11px; color:#6b7280;">
-                <p style="margin:0 0 4px;">
-                  You’re receiving this email because an Aervo workspace was created for <span style="color:#e5e7eb;">${safeCompany}</span>.
-                </p>
-                <p style="margin:0 0 4px;">
-                  If this wasn’t you, please email <a href="mailto:support@aervoapp.com" style="color:#93c5fd; text-decoration:none;">support@aervoapp.com</a> and we’ll take a look.
-                </p>
-                <p style="margin:10px 0 0; color:#4b5563;">
-                  © ${new Date().getFullYear()} Aervo. All rights reserved.
-                </p>
-              </td>
-            </tr>
+      <div style="padding:22px 32px;text-align:center;font-size:12px;color:#6b7280;background:#020617;">
+        You’re receiving this email because an Aervo workspace was created for ${companyName || "your business"}.
+        <br/>© ${new Date().getFullYear()} Aervo. All rights reserved.
+      </div>
+    </div>
 
-          </table>
-        </td>
-      </tr>
-    </table>
   </body>
   </html>
   `;
@@ -237,26 +99,16 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
   await sgMail.send({
     to: toEmail,
     from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo, ${companyName || "your new command center"}`,
+    subject: `Welcome to Aervo${companyName ? ", " + companyName : ""}`,
     html,
   });
 }
 
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo, ${safeCompany}`,
-    html,
-  });
-}
-
-// ============= RESET PASSWORD EMAIL (AERVO THEME) =============
+// ============= RESET PASSWORD EMAIL =============
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
   const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
   const cleanBase = baseUrl.replace(/\/+$/, "");
-  const resetUrl = `${cleanBase}/reset-password.html?token=${encodeURIComponent(
-    token
-  )}`;
+  const resetUrl = `${cleanBase}/reset-password.html?token=${encodeURIComponent(token)}`;
 
   const html = `
   <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
@@ -284,63 +136,39 @@ async function sendPasswordResetEmail({ toEmail, companyName, token }) {
       </tr>
 
       <tr>
-        <td style="padding:32px 40px 24px;">
+        <td style="padding:32px 40px;">
           <h1 style="margin:0 0 12px;font-size:22px;color:#e5ecff;font-weight:600;">
-            Hey there${companyName ? ` from ${companyName}` : ""} 👋
+            Hi${companyName ? ` from ${companyName}` : ""} 👋
           </h1>
           <p style="margin:0 0 10px;font-size:14px;color:#d1d5db;line-height:1.7;">
-            We received a request to reset the password for your Aervo account.
+            We received a request to reset your Aervo password.
           </p>
-          <p style="margin:0 0 16px;font-size:14px;color:#d1d5db;line-height:1.7;">
-            If you forgot your password or you're having trouble signing in, no worries.
-            Just click the button below and we’ll help you get back into your account.
+          <p style="margin:0 0 20px;font-size:14px;color:#d1d5db;line-height:1.7;">
+            If this was you, click below to set a new password:
           </p>
-        </td>
-      </tr>
 
-      <tr>
-        <td style="padding:0 40px 24px;">
           <a href="${resetUrl}" style="
             display:inline-block;
             padding:12px 26px;
             border-radius:999px;
             background:linear-gradient(135deg,#4f46e5,#6366f1);
-            color:#f9fafb;
-            font-size:14px;
+            color:#fff;
             text-decoration:none;
+            font-size:14px;
             font-weight:500;
             box-shadow:0 12px 30px rgba(79,70,229,0.45);
           ">
             Reset password
           </a>
-          <p style="margin:14px 0 0;font-size:12px;color:#9ca3af;">
-            This link will only work once and will expire in about an hour.
+
+          <p style="margin:18px 0 0;font-size:12px;color:#9ca3af;">
+            If you didn’t request this, you can safely ignore this message.
           </p>
         </td>
       </tr>
 
       <tr>
-        <td style="padding:0 40px 28px;">
-          <p style="margin:0 0 8px;font-size:13px;color:#9ca3af;">
-            Or copy and paste this link into your browser:
-          </p>
-          <p style="margin:0;font-size:12px;color:#9ca3af;word-break:break-all;">
-            ${resetUrl}
-          </p>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:0 40px 24px;">
-          <p style="margin:0;font-size:12px;color:#6b7280;line-height:1.7;">
-            If you didn’t ask to reset your password, you can safely ignore this email.
-            Your login details will stay the same.
-          </p>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:18px 40px 26px;border-top:1px solid rgba(55,65,81,0.8);text-align:center;font-size:11px;color:#6b7280;">
+        <td style="padding:18px 40px 26px;text-align:center;font-size:11px;color:#6b7280;border-top:1px solid rgba(55,65,81,0.8);">
           © ${new Date().getFullYear()} Aervo. All rights reserved.
         </td>
       </tr>
@@ -372,30 +200,12 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
-// ============= HEALTH CHECKS =============
+// ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
 
-app.get("/api/status", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT NOW() AS now");
-    res.json({
-      status: "ok",
-      app: "Aervo backend",
-      environment: process.env.NODE_ENV || "development",
-      dbTime: result.rows[0].now,
-    });
-  } catch (err) {
-    console.error("Status check error:", err);
-    res.status(500).json({
-      status: "error",
-      message: "Database connection failed",
-    });
-  }
-});
-
-// Quick test endpoint for welcome email
+// Test email endpoint
 app.get("/api/test-email", async (req, res) => {
   const to = req.query.to || process.env.TEST_EMAIL;
 
@@ -425,7 +235,7 @@ app.post("/api/signup", async (req, res) => {
 
     const normalizedEmail = email.toLowerCase();
 
-    // 1) Check if user already exists
+    // Check if user exists
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
       [normalizedEmail]
@@ -438,30 +248,26 @@ app.post("/api/signup", async (req, res) => {
       });
     }
 
-    // 2) Hash password
     const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // 3) Insert user
     const insertResult = await pool.query(
       `
-      INSERT INTO users (email, password_hash, company_name, role)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, email, company_name, role
+        INSERT INTO users (email, password_hash, company_name, role)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, email, company_name, role
       `,
       [normalizedEmail, passwordHash, companyName, "Owner"]
     );
 
     const user = insertResult.rows[0];
 
-    // 4) Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // 5) Send response
     res.json({
       success: true,
       token,
@@ -473,11 +279,11 @@ app.post("/api/signup", async (req, res) => {
       },
     });
 
-    // 6) Send welcome email in background
     sendWelcomeEmail({
       toEmail: normalizedEmail,
       companyName,
     }).catch((err) => console.error("Welcome email failed:", err));
+
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
@@ -507,18 +313,20 @@ app.post("/api/login", async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
     const user = result.rows[0];
-
     const match = await bcrypt.compare(password, user.password_hash);
+
     if (!match) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid credentials." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials.",
+      });
     }
 
     await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [
@@ -541,6 +349,7 @@ app.post("/api/login", async (req, res) => {
         role: user.role,
       },
     });
+
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({
@@ -550,7 +359,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// ============= FORGOT PASSWORD (DB-backed) =============
+// ============= FORGOT PASSWORD =============
 app.post("/api/forgot-password", async (req, res) => {
   const { email } = req.body;
 
@@ -569,8 +378,7 @@ app.post("/api/forgot-password", async (req, res) => {
       [normalizedEmail]
     );
 
-    if (result.rowCount === 0) {
-      // Don't leak whether the email exists
+    if (result.rows.length === 0) {
       return res.json({
         success: true,
         message: "If an account exists, we sent a reset link.",
@@ -580,7 +388,7 @@ app.post("/api/forgot-password", async (req, res) => {
     const user = result.rows[0];
 
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60);
 
     await pool.query(
       `
@@ -598,26 +406,21 @@ app.post("/api/forgot-password", async (req, res) => {
       token,
     });
 
-    return res.json({
+    res.json({
       success: true,
       message: "If an account exists, we sent a reset link.",
     });
+
   } catch (err) {
-    console.error("Error in /api/forgot-password", err);
-
-    const sgError =
-      err.response?.body?.errors?.[0]?.message ||
-      err.message ||
-      "Something went wrong on the server.";
-
-    return res.status(500).json({
+    console.error("Forgot password error:", err);
+    res.status(500).json({
       success: false,
-      message: sgError,
+      message: "Something went wrong.",
     });
   }
 });
 
-// ============= RESET PASSWORD (DB-backed) =============
+// ============= RESET PASSWORD =============
 app.post("/api/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
 
@@ -631,15 +434,14 @@ app.post("/api/reset-password", async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT id, email
-      FROM users
+      SELECT id, email FROM users
       WHERE reset_token = $1
         AND reset_token_expires > NOW()
       `,
       [token]
     );
 
-    if (result.rowCount === 0) {
+    if (result.rows.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired reset link.",
@@ -647,7 +449,6 @@ app.post("/api/reset-password", async (req, res) => {
     }
 
     const user = result.rows[0];
-
     const hashed = await bcrypt.hash(newPassword, 10);
 
     await pool.query(
@@ -661,13 +462,14 @@ app.post("/api/reset-password", async (req, res) => {
       [hashed, user.id]
     );
 
-    return res.json({
+    res.json({
       success: true,
-      message: "Password updated. You can now log in.",
+      message: "Password updated successfully.",
     });
+
   } catch (err) {
-    console.error("Error in /api/reset-password", err);
-    return res.status(500).json({
+    console.error("Reset password error:", err);
+    res.status(500).json({
       success: false,
       message: "Something went wrong.",
     });
