@@ -35,7 +35,7 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
             box-shadow:0 30px 80px rgba(15,23,42,0.75);
             overflow:hidden;
           ">
-            <!-- Hero / title area (with ghost bird) -->
+            <!-- Hero / title area (with ghost bird on the right) -->
             <tr>
               <td style="
                 padding:24px 32px 18px;
@@ -46,50 +46,52 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
                 <!-- BIG ghost bird in the top-right, behind text -->
                 <div style="
                   position:absolute;
-                  top:-24px;
-                  right:16px;
-                  opacity:0.06;
+                  top:-10px;
+                  right:0;
+                  opacity:0.13;
                   pointer-events:none;
+                  z-index:0;
                 ">
                   <img src="https://aervoapp.com/logo.png"
                        alt=""
-                       width="180"
-                       style="display:block; max-width:180px;" />
+                       width="260"
+                       style="display:block; max-width:260px;" />
                 </div>
 
-                <!-- Small text label instead of logo row -->
-                <div style="
-                  font-size:11px;
-                  letter-spacing:0.18em;
-                  text-transform:uppercase;
-                  color:#6b7280;
-                  margin-bottom:6px;
-                ">
-                  AERVO
+                <!-- All text sits above the bird -->
+                <div style="position:relative; z-index:2;">
+                  <div style="
+                    font-size:11px;
+                    letter-spacing:0.18em;
+                    text-transform:uppercase;
+                    color:#6b7280;
+                    margin-bottom:6px;
+                  ">
+                    AERVO
+                  </div>
+
+                  <h1 style="
+                    margin:0 0 10px 0;
+                    font-size:28px;
+                    line-height:1.3;
+                    color:#f9fafb;
+                    font-weight:650;
+                  ">
+                    Welcome aboard, ${companyName || "there"} 👋
+                  </h1>
+
+                  <p style="
+                    margin:0;
+                    font-size:14px;
+                    line-height:1.7;
+                    color:#cbd5f5;
+                  ">
+                    You just spun up a new command center for your business.
+                    Aervo pulls your sales, inventory, and customer signals into
+                    one clear view so you can see what’s working and what needs
+                    attention in seconds.
+                  </p>
                 </div>
-
-                <!-- Main welcome headline moved up -->
-                <h1 style="
-                  margin:0 0 10px 0;
-                  font-size:26px;
-                  line-height:1.3;
-                  color:#f9fafb;
-                  font-weight:650;
-                ">
-                  Welcome aboard, ${companyName || "there"} 👋
-                </h1>
-
-                <p style="
-                  margin:0;
-                  font-size:14px;
-                  line-height:1.7;
-                  color:#cbd5f5;
-                ">
-                  You just spun up a new command center for your business.
-                  Aervo pulls your sales, inventory, and customer signals
-                  into one clear view so you can see what's working and what
-                  needs attention in seconds.
-                </p>
               </td>
             </tr>
 
@@ -115,11 +117,12 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
                     <strong>See today at a glance</strong> – one live dashboard instead of ten tabs.
                   </li>
                   <li>
-                    <strong>Ask natural questions</strong> – “How did we do this week?” or “What changed?”
-                    and get clear answers.
+                    <strong>Ask natural questions</strong> – “How did we do this week?” or
+                    “What changed?” and get clear answers.
                   </li>
                   <li>
-                    <strong>Catch slowdowns early</strong> – spot dips in sales or low stock before they hurt you.
+                    <strong>Catch slowdowns early</strong> – spot dips in sales or low stock
+                    before they hurt you.
                   </li>
                 </ul>
               </td>
