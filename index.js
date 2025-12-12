@@ -14,12 +14,14 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // ================== WELCOME EMAIL (AERVO THEME) ==================
 async function sendWelcomeEmail({ toEmail, companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
 
   const html = `
   <!DOCTYPE html>
   <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Welcome to Aervo</title>
   </head>
   <body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
@@ -35,63 +37,43 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
             box-shadow:0 30px 80px rgba(15,23,42,0.75);
             overflow:hidden;
           ">
-            <!-- Hero / title area (with ghost bird on the right) -->
+
+            <!-- Wordmark header -->
             <tr>
-              <td style="
-                padding:24px 32px 18px;
-                background:#020617;
-                position:relative;
-              " align="left">
+              <td align="center" style="padding:26px 32px 6px; background:#020617;">
+                <img
+                  src="${wordmarkUrl}"
+                  alt="Aervo"
+                  width="220"
+                  style="display:block; margin:0 auto; max-width:220px; height:auto;"
+                />
+              </td>
+            </tr>
 
-                <!-- BIG ghost bird in the top-right, behind text -->
-                <div style="
-                  position:absolute;
-                  top:-10px;
-                  right:0;
-                  opacity:0.13;
-                  pointer-events:none;
-                  z-index:0;
+            <!-- Hero / title area -->
+            <tr>
+              <td style="padding:10px 32px 18px; background:#020617;" align="left">
+                <h1 style="
+                  margin:0 0 10px 0;
+                  font-size:28px;
+                  line-height:1.3;
+                  color:#f9fafb;
+                  font-weight:650;
                 ">
-                  <img src="https://aervoapp.com/logo.png"
-                       alt=""
-                       width="260"
-                       style="display:block; max-width:260px;" />
-                </div>
+                  Welcome aboard, ${companyName || "there"} 👋
+                </h1>
 
-                <!-- All text sits above the bird -->
-                <div style="position:relative; z-index:2;">
-                  <div style="
-                    font-size:11px;
-                    letter-spacing:0.18em;
-                    text-transform:uppercase;
-                    color:#6b7280;
-                    margin-bottom:6px;
-                  ">
-                    AERVO
-                  </div>
-
-                  <h1 style="
-                    margin:0 0 10px 0;
-                    font-size:28px;
-                    line-height:1.3;
-                    color:#f9fafb;
-                    font-weight:650;
-                  ">
-                    Welcome aboard, ${companyName || "there"} 👋
-                  </h1>
-
-                  <p style="
-                    margin:0;
-                    font-size:14px;
-                    line-height:1.7;
-                    color:#cbd5f5;
-                  ">
-                    You just spun up a new command center for your business.
-                    Aervo pulls your sales, inventory, and customer signals into
-                    one clear view so you can see what’s working and what needs
-                    attention in seconds.
-                  </p>
-                </div>
+                <p style="
+                  margin:0;
+                  font-size:14px;
+                  line-height:1.7;
+                  color:#cbd5f5;
+                ">
+                  You just spun up a new command center for your business.
+                  Aervo pulls your sales, inventory, and customer signals into
+                  one clear view so you can see what’s working and what needs
+                  attention in seconds.
+                </p>
               </td>
             </tr>
 
