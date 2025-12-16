@@ -1,5 +1,5 @@
-const { createVerifyToken } = require("./utils/emailVerify");
 require("dotenv").config();
+const { createVerifyToken } = require("./utils/emailVerify");
 console.log("APP_URL =", process.env.APP_URL);
 
 const express = require("express");
@@ -368,6 +368,11 @@ app.post("/api/signup", async (req, res) => {
         success: false,
         message: "An account with this email already exists.",
       });
+      const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
+const passwordHash = await bcrypt.hash(password, saltRounds);
+
+const { token: verifyToken, tokenHash } = createVerifyToken();
+const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
     }
 
     const { token: verifyToken, tokenHash } = createVerifyToken();
