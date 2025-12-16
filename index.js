@@ -1,4 +1,5 @@
 require("dotenv").config();
+console.log("APP_URL =", process.env.APP_URL);
 
 const express = require("express");
 const cors = require("cors");
@@ -308,6 +309,9 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.get("/api/_env", (req, res) => {
+  res.json({ APP_URL: process.env.APP_URL || null });
+});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
