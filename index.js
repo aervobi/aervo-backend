@@ -368,40 +368,40 @@ app.post("/api/signup", async (req, res) => {
         success: false,
         message: "An account with this email already exists.",
       });
-      const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
-const passwordHash = await bcrypt.hash(password, saltRounds);
-
-const { token: verifyToken, tokenHash } = createVerifyToken();
-const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
     }
 
-    const { token: verifyToken, tokenHash } = createVerifyToken();
-const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    // ✅ Create password hash (this was missing / in the wrong place)
+    const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
 
-const insertResult = await pool.query(
-  `
-    INSERT INTO users (
-      email,
-      password_hash,
-      company_name,
-      role,
-      email_verified,
-      verify_token_hash,
-      verify_expires_at
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    RETURNING id, email, company_name, role
-  `,
-  [
-    normalizedEmail,
-    passwordHash,
-    companyName,
-    "Owner",
-    false,
-    tokenHash,
-    verifyExpiresAt,
-  ]
-);
+    // ✅ Create verification token + expiry
+    const { token: verifyToken, tokenHash } = createVerifyToken();
+    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    const insertResult = await pool.query(
+      `
+        INSERT INTO users (
+          email,
+          password_hash,
+          company_name,
+          role,
+          email_verified,
+          verify_token_hash,
+          verify_expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, email, company_name, role
+      `,
+      [
+        normalizedEmail,
+        passwordHash,
+        companyName,
+        "Owner",
+        false,
+        tokenHash,
+        verifyExpiresAt,
+      ]
+    );
 
     const user = insertResult.rows[0];
 
@@ -420,13 +420,14 @@ const insertResult = await pool.query(
         companyName: user.company_name,
         role: user.role,
       },
+      // temporary: so we can test without emailing yet (REMOVE LATER)
+      verifyToken,
     });
 
     sendWelcomeEmail({
       toEmail: normalizedEmail,
       companyName,
     }).catch((err) => console.error("Welcome email failed:", err));
-
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
