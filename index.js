@@ -1,3 +1,4 @@
+const { createVerifyToken } = require("./utils/emailVerify");
 require("dotenv").config();
 console.log("APP_URL =", process.env.APP_URL);
 
@@ -309,9 +310,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.get("/api/_env", (req, res) => {
-  res.json({ APP_URL: process.env.APP_URL || null });
-});
+
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -371,17 +370,33 @@ app.post("/api/signup", async (req, res) => {
       });
     }
 
-    const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const { token: verifyToken, tokenHash } = createVerifyToken();
+const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    const insertResult = await pool.query(
-      `
-        INSERT INTO users (email, password_hash, company_name, role)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, email, company_name, role
-      `,
-      [normalizedEmail, passwordHash, companyName, "Owner"]
-    );
+const insertResult = await pool.query(
+  `
+    INSERT INTO users (
+      email,
+      password_hash,
+      company_name,
+      role,
+      email_verified,
+      verify_token_hash,
+      verify_expires_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING id, email, company_name, role
+  `,
+  [
+    normalizedEmail,
+    passwordHash,
+    companyName,
+    "Owner",
+    false,
+    tokenHash,
+    verifyExpiresAt,
+  ]
+);
 
     const user = insertResult.rows[0];
 
