@@ -475,14 +475,14 @@ app.get("/api/verify-email", async (req, res) => {
       .digest("hex");
 
     const result = await pool.query(
-      `
-        SELECT id, email_verified, verify_expires_at
-        FROM users
-        WHERE email = $1
-          AND verify_token_hash = $2
-      `,
-      [email.toLowerCase(), tokenHash]
-    );
+  `
+    SELECT id, email_verified, verify_expires_at, company_name
+    FROM users
+    WHERE email = $1
+      AND verify_token_hash = $2
+  `,
+  [email.toLowerCase(), tokenHash]
+);
 
     if (result.rows.length === 0) {
       return res.status(400).send("Invalid or expired verification link.");
@@ -508,7 +508,10 @@ app.get("/api/verify-email", async (req, res) => {
       `,
       [user.id]
     );
-
+sendWelcomeEmail({
+  toEmail: email.toLowerCase(),
+  companyName: user.company_name,
+}).catch(err => console.error("Welcome email failed:", err));
     return res.redirect("https://aervoapp.com/login.html?verified=1");
   } catch (err) {
     console.error("Verify email error:", err);
