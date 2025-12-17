@@ -229,18 +229,109 @@ async function sendVerifyEmail({ toEmail, token }) {
   toEmail
 )}`;
 
-  const html = `
-    <div style="font-family:system-ui,-apple-system,sans-serif;padding:32px">
-      <h2>Verify your email</h2>
-      <p>Click the button below to verify your email and activate your Aervo workspace.</p>
-      <p>
-        <a href="${verifyUrl}" style="display:inline-block;padding:12px 20px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:8px;">
-          Verify email
-        </a>
-      </p>
-      <p>If you didn’t create this account, you can ignore this email.</p>
-    </div>
-  `;
+const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verify your email - Aervo</title>
+</head>
+<body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px; background:#020617;">
+    <tr>
+      <td align="center">
+        <table width="600" cellspacing="0" cellpadding="0" style="
+          max-width:600px;
+          background:#020617;
+          border-radius:24px;
+          border:1px solid #111827;
+          box-shadow:0 30px 80px rgba(15,23,42,0.75);
+          overflow:hidden;
+        ">
+
+          <!-- Wordmark header -->
+          <tr>
+            <td align="center" style="padding:26px 32px 6px; background:#020617;">
+              <img
+                src="https://aervoapp.com/assets/aervo-wordmark.png"
+                alt="Aervo"
+                width="220"
+                style="display:block; margin:0 auto; max-width:220px; height:auto;"
+              />
+            </td>
+          </tr>
+
+          <!-- Title -->
+          <tr>
+            <td style="padding:10px 32px 18px; background:#020617;" align="left">
+              <h1 style="
+                margin:0 0 10px 0;
+                font-size:28px;
+                line-height:1.3;
+                color:#f9fafb;
+                font-weight:650;
+              ">
+                Verify your email to activate Aervo ✉️
+              </h1>
+
+              <p style="
+                margin:0;
+                font-size:14px;
+                line-height:1.7;
+                color:#cbd5f5;
+              ">
+                One quick step and your workspace is live. Click the button below to confirm your email address.
+              </p>
+            </td>
+          </tr>
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:4px 32px 18px 32px;" align="left">
+              <a href="${verifyUrl}" style="
+                display:inline-block;
+                padding:12px 24px;
+                border-radius:999px;
+                background:linear-gradient(135deg,#4f46e5,#6366f1);
+                color:#f9fafb;
+                text-decoration:none;
+                font-size:14px;
+                font-weight:600;
+                box-shadow:0 14px 32px rgba(79,70,229,0.5);
+              ">
+                Verify email →
+              </a>
+
+              <p style="margin:14px 0 0; font-size:12px; line-height:1.6; color:#9ca3af;">
+                If the button doesn’t work, copy and paste this link into your browser:
+                <br />
+                <span style="color:#a5b4fc; word-break:break-all;">${verifyUrl}</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="
+              padding:14px 32px 20px 32px;
+              border-top:1px solid #111827;
+              font-size:11px;
+              color:#6b7280;
+            ">
+              If you didn’t create an Aervo account, you can safely ignore this email.
+              <br /><br />
+              © ${new Date().getFullYear()} Aervo. All rights reserved.
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
 
   await sgMail.send({
     to: toEmail,
