@@ -498,16 +498,24 @@ app.get("/api/verify-email", async (req, res) => {
       return res.status(400).send("Verification link expired.");
     }
 
-    await pool.query(
-      `
-        UPDATE users
-        SET email_verified = TRUE,
-            verify_token_hash = NULL,
-            verify_expires_at = NULL
-        WHERE id = $1
-      `,
-      [user.id]
-    );
+  await pool.query(
+  `
+    UPDATE users
+    SET email_verified = TRUE,
+        verify_token_hash = NULL,
+        verify_expires_at = NULL
+    WHERE id = $1
+  `,
+  [user.id]
+);
+
+// ✅ Send welcome email AFTER verification
+sendWelcomeEmail({
+  toEmail: email.toLowerCase(),
+  companyName: user.company_name,
+}).catch((err) => console.error("Welcome email failed:", err));
+
+return res.redirect("https://aervoapp.com/login.html?verified=1");
 sendWelcomeEmail({
   toEmail: email.toLowerCase(),
   companyName: user.company_name,
