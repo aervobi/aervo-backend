@@ -264,7 +264,7 @@ const html = `
 
           <!-- Title -->
           <tr>
-            <td style="padding:10px 32px 18px; background:#020617;" align="left">
+            <td style="padding:10px 32px 10px; background:#020617;" align="left">
               <h1 style="
                 margin:0 0 10px 0;
                 font-size:28px;
@@ -281,8 +281,80 @@ const html = `
                 line-height:1.7;
                 color:#cbd5f5;
               ">
-                One quick step and your workspace is live. Click the button below to confirm your email address.
+                One quick step and your workspace is live.
               </p>
+            </td>
+          </tr>
+
+          <!-- Mini flow cards -->
+          <tr>
+            <td style="padding:14px 32px 16px 32px;">
+              <p style="
+                margin:0 0 10px;
+                font-size:14px;
+                font-weight:600;
+                color:#e5e7eb;
+              ">
+                Here’s what happens next:
+              </p>
+
+              <table width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <!-- Card 1 -->
+                  <td width="33.33%" valign="top" style="padding-right:8px;">
+                    <div style="
+                      border-radius:16px;
+                      background:#050816;
+                      border:1px solid #111827;
+                      padding:14px 12px;
+                    ">
+                      <div style="font-size:22px; margin-bottom:6px;">1️⃣</div>
+                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                        Click verify
+                      </div>
+                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                        Confirm this email address belongs to you.
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- Card 2 -->
+                  <td width="33.33%" valign="top" style="padding:0 4px;">
+                    <div style="
+                      border-radius:16px;
+                      background:#050816;
+                      border:1px solid #111827;
+                      padding:14px 12px;
+                    ">
+                      <div style="font-size:22px; margin-bottom:6px;">2️⃣</div>
+                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                        Activate workspace
+                      </div>
+                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                        We turn on your account and secure your access.
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- Card 3 -->
+                  <td width="33.33%" valign="top" style="padding-left:8px;">
+                    <div style="
+                      border-radius:16px;
+                      background:#050816;
+                      border:1px solid #111827;
+                      padding:14px 12px;
+                    ">
+                      <div style="font-size:22px; margin-bottom:6px;">3️⃣</div>
+                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
+                        Welcome email
+                      </div>
+                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
+                        You’ll get the Aervo welcome message right after.
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
 
