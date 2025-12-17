@@ -224,6 +224,31 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
     html,
   });
 }
+async function sendVerifyEmail({ toEmail, token }) {
+  const verifyUrl = `${process.env.APP_URL}/api/verify-email?token=${token}&email=${encodeURIComponent(
+    toEmail
+  )}`;
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;padding:32px">
+      <h2>Verify your email</h2>
+      <p>Click the button below to verify your email and activate your Aervo workspace.</p>
+      <p>
+        <a href="${verifyUrl}" style="display:inline-block;padding:12px 20px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:8px;">
+          Verify email
+        </a>
+      </p>
+      <p>If you didn’t create this account, you can ignore this email.</p>
+    </div>
+  `;
+
+  await sgMail.send({
+    to: toEmail,
+    from: process.env.SENDGRID_FROM_EMAIL,
+    subject: "Verify your email for Aervo",
+    html,
+  });
+}
 
 // ============= RESET PASSWORD EMAIL =============
 async function sendPasswordResetEmail({ toEmail, companyName, token }) {
@@ -424,10 +449,10 @@ app.post("/api/signup", async (req, res) => {
       verifyToken,
     });
 
-    sendWelcomeEmail({
-      toEmail: normalizedEmail,
-      companyName,
-    }).catch((err) => console.error("Welcome email failed:", err));
+    sendVerifyEmail({
+  toEmail: normalizedEmail,
+  token: verifyToken,
+}).catch((err) => console.error("Verify email failed:", err));
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
