@@ -225,9 +225,9 @@ async function sendWelcomeEmail({ toEmail, companyName }) {
   });
 }
 async function sendVerifyEmail({ toEmail, token }) {
-  const verifyUrl = `${process.env.APP_URL}/api/verify-email?token=${token}&email=${encodeURIComponent(
-    toEmail
-  )}`;
+  const verifyUrl = `https://aervo-backend.onrender.com/api/verify-email?token=${token}&email=${encodeURIComponent(
+  toEmail
+)}`;
 
   const html = `
     <div style="font-family:system-ui,-apple-system,sans-serif;padding:32px">
