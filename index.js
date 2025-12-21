@@ -4,6 +4,7 @@ console.log("APP_URL =", process.env.APP_URL);
 
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -498,6 +499,17 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+// ============= RATE LIMITING =============
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many attempts. Please wait a bit and try again.",
+  },
+});
 
 
 const pool = new Pool({
@@ -532,7 +544,7 @@ app.get("/api/test-email", async (req, res) => {
 });
 
 // ============= SIGNUP =============
-app.post("/api/signup", async (req, res) => {
+app.post("/api/signup", authLimiter, async (req, res) => {
   try {
     const { email, password, companyName } = req.body;
 
@@ -691,7 +703,7 @@ sendWelcomeEmail({
 });
 
 // ============= LOGIN =============
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
