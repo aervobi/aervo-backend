@@ -501,13 +501,21 @@ app.use(cors());
 app.use(express.json());
 // ============= RATE LIMITING =============
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // 20 requests per IP per window
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many attempts. Please wait a bit and try again.",
+
+  handler: (req, res) => {
+    const retryAfterSeconds = Math.ceil((15 * 60 * 1000) / 1000); // 900
+    res.set("Retry-After", String(retryAfterSeconds));
+    return res.status(429).json({
+      success: false,
+      code: "RATE_LIMITED",
+      message: "Aervo Shield is on. Too many attempts from this device.",
+      hint: "Wait a minute and try again. If you're stuck, use “Forgot password.”",
+      retryAfterSeconds,
+    });
   },
 });
 
