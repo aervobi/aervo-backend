@@ -1,4 +1,6 @@
 require("dotenv").config();
+// Initialize Shopify context if env present
+require("./utils/shopify");
 const { createVerifyToken } = require("./utils/emailVerify");
 console.log("APP_URL =", process.env.APP_URL);
 
@@ -8,504 +10,29 @@ const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const sgMail = require("@sendgrid/mail");
 const crypto = require("crypto");
 
-// ============= SENDGRID SETUP =============
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-// ================== WELCOME EMAIL (AERVO THEME) ==================
-async function sendWelcomeEmail({ toEmail, companyName }) {
-  const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
-
-  const html = `
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Welcome to Aervo</title>
-  </head>
-  <body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
-    <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px; background:#020617;">
-      <tr>
-        <td align="center">
-          <!-- Outer card -->
-          <table width="600" cellspacing="0" cellpadding="0" style="
-            max-width:600px;
-            background:#020617;
-            border-radius:24px;
-            border:1px solid #111827;
-            box-shadow:0 30px 80px rgba(15,23,42,0.75);
-            overflow:hidden;
-          ">
-
-            <!-- Wordmark header -->
-            <tr>
-              <td align="center" style="padding:26px 32px 6px; background:#020617;">
-                <img
-                  src="${wordmarkUrl}"
-                  alt="Aervo"
-                  width="220"
-                  style="display:block; margin:0 auto; max-width:220px; height:auto;"
-                />
-              </td>
-            </tr>
-
-            <!-- Hero / title area -->
-            <tr>
-              <td style="padding:10px 32px 18px; background:#020617;" align="left">
-                <h1 style="
-                  margin:0 0 10px 0;
-                  font-size:28px;
-                  line-height:1.3;
-                  color:#f9fafb;
-                  font-weight:650;
-                ">
-                  Welcome aboard, ${companyName || "there"} 👋
-                </h1>
-
-                <p style="
-                  margin:0;
-                  font-size:14px;
-                  line-height:1.7;
-                  color:#cbd5f5;
-                ">
-                  You just spun up a new command center for your business.
-                  Aervo pulls your sales, inventory, and customer signals into
-                  one clear view so you can see what’s working and what needs
-                  attention in seconds.
-                </p>
-              </td>
-            </tr>
-
-            <!-- What Aervo helps you do -->
-            <tr>
-              <td style="padding:18px 32px 10px 32px;">
-                <p style="
-                  margin:0 0 8px;
-                  font-size:14px;
-                  font-weight:600;
-                  color:#e5e7eb;
-                ">
-                  Here’s what Aervo is built to help you do:
-                </p>
-                <ul style="
-                  margin:0;
-                  padding-left:18px;
-                  font-size:13px;
-                  line-height:1.7;
-                  color:#d1d5db;
-                ">
-                  <li>
-                    <strong>See today at a glance</strong> – one live dashboard instead of ten tabs.
-                  </li>
-                  <li>
-                    <strong>Ask natural questions</strong> – “How did we do this week?” or
-                    “What changed?” and get clear answers.
-                  </li>
-                  <li>
-                    <strong>Catch slowdowns early</strong> – spot dips in sales or low stock
-                    before they hurt you.
-                  </li>
-                </ul>
-              </td>
-            </tr>
-
-            <!-- 3 feature cards -->
-            <tr>
-              <td style="padding:10px 32px 20px 32px;">
-                <table width="100%" cellspacing="0" cellpadding="0">
-                  <tr>
-                    <!-- Card 1 -->
-                    <td width="33.33%" valign="top" style="padding-right:8px;">
-                      <div style="
-                        border-radius:16px;
-                        background:#050816;
-                        border:1px solid #111827;
-                        padding:14px 12px;
-                      ">
-                        <div style="font-size:22px; margin-bottom:6px;">📊</div>
-                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                          Live overview
-                        </div>
-                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                          Sales, inventory, and key metrics in one place.
-                        </div>
-                      </div>
-                    </td>
-
-                    <!-- Card 2 -->
-                    <td width="33.33%" valign="top" style="padding:0 4px;">
-                      <div style="
-                        border-radius:16px;
-                        background:#050816;
-                        border:1px solid #111827;
-                        padding:14px 12px;
-                      ">
-                        <div style="font-size:22px; margin-bottom:6px;">💬</div>
-                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                          Explain the “why”
-                        </div>
-                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                          Short explanations, not just charts and numbers.
-                        </div>
-                      </div>
-                    </td>
-
-                    <!-- Card 3 -->
-                    <td width="33.33%" valign="top" style="padding-left:8px;">
-                      <div style="
-                        border-radius:16px;
-                        background:#050816;
-                        border:1px solid #111827;
-                        padding:14px 12px;
-                      ">
-                        <div style="font-size:22px; margin-bottom:6px;">⚡</div>
-                        <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                          Next best steps
-                        </div>
-                        <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                          Suggestions you can act on today to move the needle.
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <!-- CTA -->
-            <tr>
-              <td style="padding:4px 32px 26px 32px;" align="left">
-                <a href="${appUrl}" style="
-                  display:inline-block;
-                  padding:12px 24px;
-                  border-radius:999px;
-                  background:linear-gradient(135deg,#4f46e5,#6366f1);
-                  color:#f9fafb;
-                  text-decoration:none;
-                  font-size:14px;
-                  font-weight:600;
-                  box-shadow:0 14px 32px rgba(79,70,229,0.5);
-                ">
-                  Open your Aervo dashboard →
-                </a>
-              </td>
-            </tr>
-
-            <!-- Footer -->
-            <tr>
-              <td style="
-                padding:14px 32px 20px 32px;
-                border-top:1px solid #111827;
-                font-size:11px;
-                color:#6b7280;
-              ">
-                You’re receiving this because an Aervo workspace was created for ${companyName || "your business"}.
-                If this wasn’t you, reply to this email and we’ll take a look.
-                <br /><br />
-                © ${new Date().getFullYear()} Aervo. All rights reserved.
-              </td>
-            </tr>
-
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-  </html>
-  `;
-
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: `Welcome to Aervo, ${companyName || "there"}`,
-    html,
-  });
-}
-async function sendVerifyEmail({ toEmail, token }) {
-  const verifyUrl = `https://aervo-backend.onrender.com/api/verify-email?token=${token}&email=${encodeURIComponent(
-  toEmail
-)}`;
-
-const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify your email - Aervo</title>
-</head>
-<body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
-  <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px; background:#020617;">
-    <tr>
-      <td align="center">
-        <table width="600" cellspacing="0" cellpadding="0" style="
-          max-width:600px;
-          background:#020617;
-          border-radius:24px;
-          border:1px solid #111827;
-          box-shadow:0 30px 80px rgba(15,23,42,0.75);
-          overflow:hidden;
-        ">
-
-          <!-- Wordmark header -->
-          <tr>
-            <td align="center" style="padding:26px 32px 6px; background:#020617;">
-              <img
-                src="https://aervoapp.com/assets/aervo-wordmark.png"
-                alt="Aervo"
-                width="220"
-                style="display:block; margin:0 auto; max-width:220px; height:auto;"
-              />
-            </td>
-          </tr>
-
-          <!-- Title -->
-          <tr>
-            <td style="padding:10px 32px 10px; background:#020617;" align="left">
-              <h1 style="
-                margin:0 0 10px 0;
-                font-size:28px;
-                line-height:1.3;
-                color:#f9fafb;
-                font-weight:650;
-              ">
-                Verify your email to activate Aervo ✉️
-              </h1>
-
-              <p style="
-                margin:0;
-                font-size:14px;
-                line-height:1.7;
-                color:#cbd5f5;
-              ">
-                One quick step and your workspace is live.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Mini flow cards -->
-          <tr>
-            <td style="padding:14px 32px 16px 32px;">
-              <p style="
-                margin:0 0 10px;
-                font-size:14px;
-                font-weight:600;
-                color:#e5e7eb;
-              ">
-                Here’s what happens next:
-              </p>
-
-              <table width="100%" cellspacing="0" cellpadding="0">
-                <tr>
-                  <!-- Card 1 -->
-                  <td width="33.33%" valign="top" style="padding-right:8px;">
-                    <div style="
-                      border-radius:16px;
-                      background:#050816;
-                      border:1px solid #111827;
-                      padding:14px 12px;
-                    ">
-                      <div style="font-size:22px; margin-bottom:6px;">1️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                        Click verify
-                      </div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                        Confirm this email address belongs to you.
-                      </div>
-                    </div>
-                  </td>
-
-                  <!-- Card 2 -->
-                  <td width="33.33%" valign="top" style="padding:0 4px;">
-                    <div style="
-                      border-radius:16px;
-                      background:#050816;
-                      border:1px solid #111827;
-                      padding:14px 12px;
-                    ">
-                      <div style="font-size:22px; margin-bottom:6px;">2️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                        Activate workspace
-                      </div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                        We turn on your account and secure your access.
-                      </div>
-                    </div>
-                  </td>
-
-                  <!-- Card 3 -->
-                  <td width="33.33%" valign="top" style="padding-left:8px;">
-                    <div style="
-                      border-radius:16px;
-                      background:#050816;
-                      border:1px solid #111827;
-                      padding:14px 12px;
-                    ">
-                      <div style="font-size:22px; margin-bottom:6px;">3️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">
-                        Welcome email
-                      </div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">
-                        You’ll get the Aervo welcome message right after.
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- CTA -->
-          <tr>
-            <td style="padding:4px 32px 18px 32px;" align="left">
-              <a href="${verifyUrl}" style="
-                display:inline-block;
-                padding:12px 24px;
-                border-radius:999px;
-                background:linear-gradient(135deg,#4f46e5,#6366f1);
-                color:#f9fafb;
-                text-decoration:none;
-                font-size:14px;
-                font-weight:600;
-                box-shadow:0 14px 32px rgba(79,70,229,0.5);
-              ">
-                Verify email →
-              </a>
-
-              <p style="margin:14px 0 0; font-size:12px; line-height:1.6; color:#9ca3af;">
-                If the button doesn’t work, copy and paste this link into your browser:
-                <br />
-                <span style="color:#a5b4fc; word-break:break-all;">${verifyUrl}</span>
-              </p>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="
-              padding:14px 32px 20px 32px;
-              border-top:1px solid #111827;
-              font-size:11px;
-              color:#6b7280;
-            ">
-              If you didn’t create an Aervo account, you can safely ignore this email.
-              <br /><br />
-              © ${new Date().getFullYear()} Aervo. All rights reserved.
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: "Verify your email for Aervo",
-    html,
-  });
-}
-
-// ============= RESET PASSWORD EMAIL =============
-async function sendPasswordResetEmail({ toEmail, companyName, token }) {
-  const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-  const cleanBase = baseUrl.replace(/\/+$/, "");
-  const resetUrl = `${cleanBase}/reset-password.html?token=${encodeURIComponent(token)}`;
-
-  const html = `
-  <div style="background:#050817;padding:40px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#050818;border-radius:16px;overflow:hidden;color:#e5ecff;border:1px solid rgba(129,140,248,0.3)">
-      
-      <tr>
-        <td style="padding:28px 40px 18px;background:radial-gradient(circle at top,#1d2a4f,#050818);border-bottom:1px solid rgba(129,140,248,0.3);">
-          <table width="100%">
-            <tr>
-              <td style="vertical-align:middle;">
-                <div style="display:flex;align-items:center;gap:10px;">
-                  <img src="https://aervoapp.com/logo.png" alt="Aervo" width="40" style="border-radius:999px;box-shadow:0 0 12px rgba(129,140,248,0.7);" />
-                  <div>
-                    <div style="font-size:13px;letter-spacing:4px;color:#a5b4fc;text-transform:uppercase;">AERVO</div>
-                    <div style="font-size:12px;color:#9ca3af;">A higher view of your business</div>
-                  </div>
-                </div>
-              </td>
-              <td style="text-align:right;font-size:12px;color:#9ca3af;">
-                Password reset request
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:32px 40px;">
-          <h1 style="margin:0 0 12px;font-size:22px;color:#e5ecff;font-weight:600;">
-            Hi${companyName ? ` from ${companyName}` : ""} 👋
-          </h1>
-          <p style="margin:0 0 10px;font-size:14px;color:#d1d5db;line-height:1.7;">
-            We received a request to reset your Aervo password.
-          </p>
-          <p style="margin:0 0 20px;font-size:14px;color:#d1d5db;line-height:1.7;">
-            If this was you, click below to set a new password:
-          </p>
-
-          <a href="${resetUrl}" style="
-            display:inline-block;
-            padding:12px 26px;
-            border-radius:999px;
-            background:linear-gradient(135deg,#4f46e5,#6366f1);
-            color:#fff;
-            text-decoration:none;
-            font-size:14px;
-            font-weight:500;
-            box-shadow:0 12px 30px rgba(79,70,229,0.45);
-          ">
-            Reset password
-          </a>
-
-          <p style="margin:18px 0 0;font-size:12px;color:#9ca3af;">
-            If you didn’t request this, you can safely ignore this message.
-          </p>
-        </td>
-      </tr>
-
-      <tr>
-        <td style="padding:18px 40px 26px;text-align:center;font-size:11px;color:#6b7280;border-top:1px solid rgba(55,65,81,0.8);">
-          © ${new Date().getFullYear()} Aervo. All rights reserved.
-        </td>
-      </tr>
-    </table>
-  </div>
-  `;
-
-  await sgMail.send({
-    to: toEmail,
-    from: process.env.SENDGRID_FROM_EMAIL,
-    subject: "Reset your Aervo password",
-    html,
-  });
-}
+const {
+  initSendgrid,
+  sendWelcomeEmail,
+  sendVerifyEmail,
+  sendPasswordResetEmail,
+} = require("./utils/email");
 
 // ============= EXPRESS + DB SETUP =============
 const app = express();
-
 app.use(cors());
 app.use(express.json());
+
+// ✅ Init SendGrid once at startup
+initSendgrid();
+
 // ============= RATE LIMITING =============
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-
   handler: (req, res) => {
     const retryAfterSeconds = Math.ceil((15 * 60 * 1000) / 1000); // 900
     res.set("Retry-After", String(retryAfterSeconds));
@@ -519,7 +46,6 @@ const authLimiter = rateLimit({
   },
 });
 
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl:
@@ -530,12 +56,30 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
+// Ensure shops table exists and mount Shopify routes
+pool
+  .query(
+    `
+      CREATE TABLE IF NOT EXISTS shops (
+        id SERIAL PRIMARY KEY,
+        shop_origin TEXT UNIQUE NOT NULL,
+        access_token TEXT NOT NULL,
+        scope TEXT,
+        installed_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `
+  )
+  .catch((err) => console.error("Failed to create shops table:", err));
+
+const mountShopifyRoutes = require("./routes/shopify");
+mountShopifyRoutes(app, pool);
+
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
 
-// Test email endpoint
+// ============= TEST EMAIL =============
 app.get("/api/test-email", async (req, res) => {
   const to = req.query.to || process.env.TEST_EMAIL;
 
@@ -563,7 +107,7 @@ app.post("/api/signup", authLimiter, async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = String(email).toLowerCase();
 
     // Check if user exists
     const existing = await pool.query(
@@ -578,13 +122,13 @@ app.post("/api/signup", authLimiter, async (req, res) => {
       });
     }
 
-    // ✅ Create password hash (this was missing / in the wrong place)
+    // Password hash
     const saltRounds = Number(process.env.BCRYPT_SALT_ROUNDS) || 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // ✅ Create verification token + expiry
+    // Verification token + expiry (store hash in DB, email raw token)
     const { token: verifyToken, tokenHash } = createVerifyToken();
-    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const insertResult = await pool.query(
       `
@@ -619,7 +163,13 @@ app.post("/api/signup", authLimiter, async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({
+    // ✅ Send verify email (don’t block signup response)
+    sendVerifyEmail({
+      toEmail: normalizedEmail,
+      token: verifyToken,
+    }).catch((err) => console.error("Verify email failed:", err));
+
+    return res.json({
       success: true,
       token,
       user: {
@@ -628,14 +178,7 @@ app.post("/api/signup", authLimiter, async (req, res) => {
         companyName: user.company_name,
         role: user.role,
       },
-      // temporary: so we can test without emailing yet (REMOVE LATER)
-      verifyToken,
     });
-
-    sendVerifyEmail({
-  toEmail: normalizedEmail,
-  token: verifyToken,
-}).catch((err) => console.error("Verify email failed:", err));
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({
@@ -644,28 +187,28 @@ app.post("/api/signup", authLimiter, async (req, res) => {
     });
   }
 });
+
+// ============= VERIFY EMAIL =============
 app.get("/api/verify-email", async (req, res) => {
   try {
-    const { token, email } = req.query;
+    const token = String(req.query.token || "");
+    const normalizedEmail = String(req.query.email || "").toLowerCase();
 
-    if (!token || !email) {
+    if (!token || !normalizedEmail) {
       return res.status(400).send("Invalid verification link.");
     }
 
-    const tokenHash = crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 
     const result = await pool.query(
-  `
-    SELECT id, email_verified, verify_expires_at, company_name
-    FROM users
-    WHERE email = $1
-      AND verify_token_hash = $2
-  `,
-  [email.toLowerCase(), tokenHash]
-);
+      `
+        SELECT id, email_verified, verify_expires_at, company_name
+        FROM users
+        WHERE email = $1
+          AND verify_token_hash = $2
+      `,
+      [normalizedEmail, tokenHash]
+    );
 
     if (result.rows.length === 0) {
       return res.status(400).send("Invalid or expired verification link.");
@@ -681,28 +224,23 @@ app.get("/api/verify-email", async (req, res) => {
       return res.status(400).send("Verification link expired.");
     }
 
-  await pool.query(
-  `
-    UPDATE users
-    SET email_verified = TRUE,
-        verify_token_hash = NULL,
-        verify_expires_at = NULL
-    WHERE id = $1
-  `,
-  [user.id]
-);
+    await pool.query(
+      `
+        UPDATE users
+        SET email_verified = TRUE,
+            verify_token_hash = NULL,
+            verify_expires_at = NULL
+        WHERE id = $1
+      `,
+      [user.id]
+    );
 
-// ✅ Send welcome email AFTER verification
-sendWelcomeEmail({
-  toEmail: email.toLowerCase(),
-  companyName: user.company_name,
-}).catch((err) => console.error("Welcome email failed:", err));
+    // ✅ Welcome email after verification
+    sendWelcomeEmail({
+      toEmail: normalizedEmail,
+      companyName: user.company_name,
+    }).catch((err) => console.error("Welcome email failed:", err));
 
-return res.redirect("https://aervoapp.com/login.html?verified=1");
-sendWelcomeEmail({
-  toEmail: email.toLowerCase(),
-  companyName: user.company_name,
-}).catch(err => console.error("Welcome email failed:", err));
     return res.redirect("https://aervoapp.com/login.html?verified=1");
   } catch (err) {
     console.error("Verify email error:", err);
@@ -722,10 +260,10 @@ app.post("/api/login", authLimiter, async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = String(email).toLowerCase();
 
     const result = await pool.query(
-      "SELECT id, email, password_hash, company_name, role FROM users WHERE email = $1",
+      "SELECT id, email, password_hash, company_name, role, email_verified FROM users WHERE email = $1",
       [normalizedEmail]
     );
 
@@ -737,6 +275,15 @@ app.post("/api/login", authLimiter, async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    // ✅ Block unverified users
+    if (!user.email_verified) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email before logging in.",
+      });
+    }
+
     const match = await bcrypt.compare(password, user.password_hash);
 
     if (!match) {
@@ -756,7 +303,7 @@ app.post("/api/login", authLimiter, async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({
+    return res.json({
       success: true,
       token,
       user: {
@@ -766,7 +313,6 @@ app.post("/api/login", authLimiter, async (req, res) => {
         role: user.role,
       },
     });
-
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({
@@ -777,7 +323,7 @@ app.post("/api/login", authLimiter, async (req, res) => {
 });
 
 // ============= FORGOT PASSWORD =============
-app.post("/api/forgot-password", async (req, res) => {
+app.post("/api/forgot-password", authLimiter, async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -788,13 +334,14 @@ app.post("/api/forgot-password", async (req, res) => {
   }
 
   try {
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = String(email).toLowerCase();
 
     const result = await pool.query(
       "SELECT id, email, company_name FROM users WHERE email = $1",
       [normalizedEmail]
     );
 
+    // Always return same message (prevents account enumeration)
     if (result.rows.length === 0) {
       return res.json({
         success: true,
@@ -823,11 +370,10 @@ app.post("/api/forgot-password", async (req, res) => {
       token,
     });
 
-    res.json({
+    return res.json({
       success: true,
       message: "If an account exists, we sent a reset link.",
     });
-
   } catch (err) {
     console.error("Forgot password error:", err);
     res.status(500).json({
@@ -838,7 +384,7 @@ app.post("/api/forgot-password", async (req, res) => {
 });
 
 // ============= RESET PASSWORD =============
-app.post("/api/reset-password", async (req, res) => {
+app.post("/api/reset-password", authLimiter, async (req, res) => {
   const { token, newPassword } = req.body;
 
   if (!token || !newPassword) {
@@ -851,9 +397,9 @@ app.post("/api/reset-password", async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT id, email FROM users
-      WHERE reset_token = $1
-        AND reset_token_expires > NOW()
+        SELECT id, email FROM users
+        WHERE reset_token = $1
+          AND reset_token_expires > NOW()
       `,
       [token]
     );
@@ -870,20 +416,19 @@ app.post("/api/reset-password", async (req, res) => {
 
     await pool.query(
       `
-      UPDATE users
-      SET password_hash = $1,
-          reset_token = NULL,
-          reset_token_expires = NULL
-      WHERE id = $2
+        UPDATE users
+        SET password_hash = $1,
+            reset_token = NULL,
+            reset_token_expires = NULL
+        WHERE id = $2
       `,
       [hashed, user.id]
     );
 
-    res.json({
+    return res.json({
       success: true,
       message: "Password updated successfully.",
     });
-
   } catch (err) {
     console.error("Reset password error:", err);
     res.status(500).json({
