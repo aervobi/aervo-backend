@@ -1,3 +1,4 @@
+require("@shopify/shopify-api/adapters/node");
 const { shopifyApi, ApiVersion } = require("@shopify/shopify-api");
 
 const apiKey = process.env.SHOPIFY_API_KEY;
