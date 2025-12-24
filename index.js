@@ -6,6 +6,7 @@ console.log("APP_URL =", process.env.APP_URL);
 
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
@@ -21,8 +22,16 @@ const {
 
 // ============= EXPRESS + DB SETUP =============
 const app = express();
+app.set("trust proxy", 1);
 app.use(cors());
-app.use(express.json());
+
+// Skip JSON parsing for Shopify webhooks so express.raw() can verify HMAC
+app.use((req, res, next) => {
+  if (req.originalUrl === "/shopify/webhooks") return next();
+  return express.json()(req, res, next);
+});
+
+app.use(cookieParser());
 
 // ✅ Init SendGrid once at startup
 initSendgrid();
@@ -46,20 +55,21 @@ const authLimiter = rateLimit({
   },
 });
 
+const isHostedDb =
+  process.env.DATABASE_URL && !process.env.DATABASE_URL.includes("localhost");
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : false,
+  ssl: isHostedDb ? { rejectUnauthorized: false } : false,
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
 // Ensure shops table exists and mount Shopify routes
-pool
-  .query(
-    `
+// Ensure Shopify tables exist, then mount Shopify routes
+(async () => {
+  try {
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS shops (
         id SERIAL PRIMARY KEY,
         shop_origin TEXT UNIQUE NOT NULL,
@@ -67,13 +77,25 @@ pool
         scope TEXT,
         installed_at TIMESTAMPTZ DEFAULT NOW()
       )
-    `
-  )
-  .catch((err) => console.error("Failed to create shops table:", err));
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shopify_oauth_states (
+        id SERIAL PRIMARY KEY,
+        shop_origin TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    console.log("✅ Shopify tables ensured");
+  } catch (err) {
+    console.error("❌ Failed to ensure Shopify tables:", err);
+  }
+})();
 
 const mountShopifyRoutes = require("./routes/shopify");
 mountShopifyRoutes(app, pool);
-
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
