@@ -40,6 +40,8 @@ module.exports = function mountShopifyRoutes(app, pool) {
 
       const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
+      console.log("Shopify redirectUri =", redirectUri);
+console.log("Shopify installUrl =", installUrl);
       return res.redirect(installUrl);
     } catch (err) {
       console.error("Shopify install begin failed:", err);
