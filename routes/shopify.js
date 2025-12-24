@@ -141,27 +141,54 @@ await pool.query(
   });
 
   // Example admin API: list products for a shop
-  router.get("/products", async (req, res) => {
-    const shop = req.query.shop;
-    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+ // Example admin API: list products for a shop
+router.get("/products", async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
 
-    try {
-      const result = await pool.query("SELECT access_token FROM shops WHERE shop_origin = $1", [shop]);
-      if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Shop not installed" });
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
 
-      const accessToken = result.rows[0].access_token;
-
-      const session = { shop, accessToken };
-      const RestClient = shopify.clients.Rest;
-      const client = new RestClient({ session });
-      const productsResp = await client.get({ path: 'products', query: { limit: 10 } });
-
-      return res.json({ success: true, products: productsResp.body.products });
-    } catch (err) {
-      console.error("List products failed:", err);
-      return res.status(500).json({ success: false, message: "Failed to fetch products" });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
     }
-  });
+
+    const accessToken = result.rows[0].access_token;
+
+    // ✅ Use direct Admin REST call (most reliable)
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+    const url = `https://${shop}/admin/api/${apiVersion}/products.json?limit=10`;
+
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const bodyText = await resp.text();
+
+    if (!resp.ok) {
+      console.error("Shopify products error:", resp.status, bodyText);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch products",
+        shopifyStatus: resp.status,
+        shopifyBody: bodyText,
+      });
+    }
+
+    const json = JSON.parse(bodyText);
+    return res.json({ success: true, products: json.products || [] });
+  } catch (err) {
+    console.error("List products failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch products" });
+  }
+});
 
   // Webhook endpoint with HMAC verification
   router.post(
