@@ -33,7 +33,12 @@ module.exports = function mountShopifyRoutes(app, pool) {
 
     try {
       const state = crypto.randomBytes(16).toString("hex");
-      res.cookie("shopify_oauth_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", maxAge: 60000 });
+      res.cookie("shopify_oauth_state", state, {
+  httpOnly: true,
+  secure: true,          // Render is HTTPS, force it
+  sameSite: "none",      // required for embedded/admin flows
+  maxAge: 5 * 60 * 1000, // 5 minutes
+});
 
       const redirectUri = `${buildAppUrl()}/shopify/callback`;
       const scopes = (process.env.SHOPIFY_SCOPES || "read_products").replace(/\s+/g,"");
