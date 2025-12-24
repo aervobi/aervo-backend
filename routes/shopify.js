@@ -35,9 +35,10 @@ module.exports = function mountShopifyRoutes(app, pool) {
       const state = crypto.randomBytes(16).toString("hex");
       res.cookie("shopify_oauth_state", state, {
   httpOnly: true,
-  secure: true,          // Render is HTTPS, force it
-  sameSite: "none",      // required for embedded/admin flows
-  maxAge: 5 * 60 * 1000, // 5 minutes
+  secure: true,        // required when sameSite is "none"
+  sameSite: "none",    // required for embedded / Shopify admin
+  maxAge: 5 * 60 * 1000,
+  path: "/shopify",
 });
 
       const redirectUri = `${buildAppUrl()}/shopify/callback`;
