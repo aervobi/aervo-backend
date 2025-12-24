@@ -1,3 +1,4 @@
+require("@shopify/shopify-api/adapters/node");
 const express = require("express");
 const crypto = require("crypto");
 const { shopify } = require("../utils/shopify");
@@ -59,10 +60,30 @@ console.log("Shopify installUrl =", installUrl);
   router.get("/callback", async (req, res) => {
     try {
       const { shop, hmac, code, state } = req.query;
-      const cookieState = req.cookies ? req.cookies.shopify_oauth_state : null;
+      if (!shop || !hmac || !code || !state)
+  return res.status(400).send("Missing required OAuth parameters");
 
-      if (!shop || !hmac || !code || !state) return res.status(400).send("Missing required OAuth parameters");
-      if (!cookieState || cookieState !== state) return res.status(400).send("Invalid OAuth state");
+// ✅ Validate OAuth state from DB (no cookies)
+const stateResult = await pool.query(
+  `
+    SELECT id FROM shopify_oauth_states
+    WHERE shop_origin = $1
+      AND state = $2
+      AND created_at > NOW() - INTERVAL '5 minutes'
+    LIMIT 1
+  `,
+  [shop, state]
+);
+
+if (stateResult.rows.length === 0) {
+  return res.status(400).send("Invalid OAuth state");
+}
+
+// one-time use: clean it up
+await pool.query(
+  `DELETE FROM shopify_oauth_states WHERE id = $1`,
+  [stateResult.rows[0].id]
+);
 
       // Validate HMAC
       if (!verifyHmac(req.query, process.env.SHOPIFY_API_SECRET || "")) {
