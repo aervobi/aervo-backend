@@ -1,4 +1,4 @@
-require("@shopify/shopify-api/adapters/node");
+
 const express = require("express");
 const crypto = require("crypto");
 const { shopify } = require("../utils/shopify");
@@ -28,33 +28,39 @@ module.exports = function mountShopifyRoutes(app, pool) {
   const router = express.Router();
 
   // Start OAuth install flow: /shopify/install?shop=storename.myshopify.com
-  router.get("/install", async (req, res) => {
-    const shop = req.query.shop;
-    if (!shop) return res.status(400).send("Missing shop parameter");
+router.get("/install", async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).send("Missing shop parameter");
 
-    try {
-      const state = crypto.randomBytes(16).toString("hex");
-      res.cookie("shopify_oauth_state", state, {
-  httpOnly: true,
-  secure: true,        // required when sameSite is "none"
-  sameSite: "none",    // required for embedded / Shopify admin
-  maxAge: 5 * 60 * 1000,
-  path: "/shopify",
+  try {
+    const state = crypto.randomBytes(16).toString("hex");
+
+    // ✅ Store OAuth state in DB (no cookies)
+    await pool.query(
+      `
+        INSERT INTO shopify_oauth_states (shop_origin, state)
+        VALUES ($1, $2)
+      `,
+      [shop, state]
+    );
+
+    const redirectUri = `${buildAppUrl()}/shopify/callback`;
+    const scopes = (process.env.SHOPIFY_SCOPES || "read_products").replace(/\s+/g, "");
+
+    const installUrl =
+      `https://${shop}/admin/oauth/authorize` +
+      `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}` +
+      `&scope=${encodeURIComponent(scopes)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&state=${state}`;
+
+    console.log("OAuth redirectUri =", redirectUri);
+    return res.redirect(installUrl);
+  } catch (err) {
+  console.error("Shopify callback error:", err);
+  return res.status(500).send(`OAuth callback failed: ${err.message}`);
+}
 });
-
-      const redirectUri = `${buildAppUrl()}/shopify/callback`;
-      const scopes = (process.env.SHOPIFY_SCOPES || "read_products").replace(/\s+/g,"");
-
-      const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
-
-      console.log("Shopify redirectUri =", redirectUri);
-console.log("Shopify installUrl =", installUrl);
-      return res.redirect(installUrl);
-    } catch (err) {
-      console.error("Shopify install begin failed:", err);
-      return res.status(500).send("Failed to start Shopify OAuth");
-    }
-  });
 
   // OAuth callback
   router.get("/callback", async (req, res) => {
