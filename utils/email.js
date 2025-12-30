@@ -1,12 +1,16 @@
 // utils/email.js
 const sgMail = require("@sendgrid/mail");
 
+let SENDGRID_READY = false;
+
 function initSendgrid() {
   if (!process.env.SENDGRID_API_KEY) {
     console.warn("SENDGRID_API_KEY is missing.");
+    SENDGRID_READY = false;
     return;
   }
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  SENDGRID_READY = true;
 }
 
 function getFromEmail() {
@@ -29,6 +33,12 @@ function stripHtml(html) {
 
 async function safeSend({ to, subject, html, text }) {
   const from = getFromEmail();
+
+  if (!SENDGRID_READY) {
+    throw new Error(
+      "SendGrid is not initialized. Call initSendgrid() at startup."
+    );
+  }
 
   if (!from) {
     throw new Error("SENDGRID_FROM_EMAIL is missing.");
@@ -179,9 +189,12 @@ Open your Aervo dashboard: ${appUrl}
 }
 
 function buildVerifyEmail({ toEmail, token }) {
-  const verifyUrl = `https://aervo-backend.onrender.com/api/verify-email?token=${token}&email=${encodeURIComponent(
-    toEmail
-  )}`;
+  const apiBase = (process.env.API_BASE_URL || "https://aervo-backend.onrender.com").replace(/\/+$/, "");
+
+  const verifyUrl = `${apiBase}/api/verify-email?token=${encodeURIComponent(
+    token
+  )}&email=${encodeURIComponent(toEmail)}`;
+
   const year = new Date().getFullYear();
 
   const html = `
@@ -219,40 +232,6 @@ function buildVerifyEmail({ toEmail, token }) {
               <p style="margin:0;font-size:14px;line-height:1.7;color:#cbd5f5;">
                 One quick step and your workspace is live.
               </p>
-            </td>
-          </tr>
-
-          <tr>
-            <td style="padding:14px 32px 16px 32px;">
-              <p style="margin:0 0 10px;font-size:14px;font-weight:600;color:#e5e7eb;">
-                Here’s what happens next:
-              </p>
-
-              <table width="100%" cellspacing="0" cellpadding="0">
-                <tr>
-                  <td width="33.33%" valign="top" style="padding-right:8px;">
-                    <div style="border-radius:16px;background:#050816;border:1px solid #111827;padding:14px 12px;">
-                      <div style="font-size:22px; margin-bottom:6px;">1️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">Click verify</div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">Confirm this email address belongs to you.</div>
-                    </div>
-                  </td>
-                  <td width="33.33%" valign="top" style="padding:0 4px;">
-                    <div style="border-radius:16px;background:#050816;border:1px solid #111827;padding:14px 12px;">
-                      <div style="font-size:22px; margin-bottom:6px;">2️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">Activate workspace</div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">We turn on your account and secure your access.</div>
-                    </div>
-                  </td>
-                  <td width="33.33%" valign="top" style="padding-left:8px;">
-                    <div style="border-radius:16px;background:#050816;border:1px solid #111827;padding:14px 12px;">
-                      <div style="font-size:22px; margin-bottom:6px;">3️⃣</div>
-                      <div style="font-size:13px;font-weight:600;color:#e5e7eb;margin-bottom:4px;">Welcome email</div>
-                      <div style="font-size:12px;line-height:1.5;color:#9ca3af;">You’ll get the Aervo welcome message right after.</div>
-                    </div>
-                  </td>
-                </tr>
-              </table>
             </td>
           </tr>
 
@@ -305,7 +284,9 @@ If you didn’t create an Aervo account, ignore this email.
 function buildPasswordResetEmail({ companyName, token }) {
   const baseUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
   const cleanBase = baseUrl.replace(/\/+$/, "");
-  const resetUrl = `${cleanBase}/reset-password.html?token=${encodeURIComponent(token)}`;
+  const resetUrl = `${cleanBase}/reset-password.html?token=${encodeURIComponent(
+    token
+  )}`;
   const year = new Date().getFullYear();
 
   const html = `

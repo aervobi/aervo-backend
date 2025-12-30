@@ -190,6 +190,112 @@ router.get("/products", async (req, res) => {
   }
 });
 
+// Example admin API: list locations for a shop
+router.get("/locations", async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
+    }
+
+    const accessToken = result.rows[0].access_token;
+
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+    const url = `https://${shop}/admin/api/${apiVersion}/locations.json`;
+
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const bodyText = await resp.text();
+
+    if (!resp.ok) {
+      console.error("Shopify locations error:", resp.status, bodyText);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch locations",
+        shopifyStatus: resp.status,
+        shopifyBody: bodyText,
+      });
+    }
+
+    const json = JSON.parse(bodyText);
+    return res.json({ success: true, locations: json.locations || [] });
+  } catch (err) {
+    console.error("List locations failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch locations" });
+  }
+});
+
+// Example admin API: get inventory levels for an inventory_item + location
+router.get("/inventory-levels", async (req, res) => {
+  const shop = req.query.shop;
+  const inventoryItemId = req.query.inventory_item_id;
+  const locationId = req.query.location_id;
+
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+  if (!inventoryItemId && !locationId)
+    return res.status(400).json({ success: false, message: "Missing inventory_item_id or location_id param" });
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
+    }
+
+    const accessToken = result.rows[0].access_token;
+
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+    const params = [];
+    if (inventoryItemId) params.push(`inventory_item_ids=${encodeURIComponent(inventoryItemId)}`);
+    if (locationId) params.push(`location_ids=${encodeURIComponent(locationId)}`);
+    const queryString = params.length ? `?${params.join("&")}` : "";
+
+    const url = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json${queryString}`;
+
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const bodyText = await resp.text();
+
+    if (!resp.ok) {
+      console.error("Shopify inventory_levels error:", resp.status, bodyText);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch inventory levels",
+        shopifyStatus: resp.status,
+        shopifyBody: bodyText,
+      });
+    }
+
+    const json = JSON.parse(bodyText);
+    return res.json({ success: true, inventory_levels: json.inventory_levels || [] });
+  } catch (err) {
+    console.error("List inventory levels failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch inventory levels" });
+  }
+});
+
   // Webhook endpoint with HMAC verification
   router.post(
     "/webhooks",
