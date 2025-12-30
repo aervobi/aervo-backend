@@ -394,7 +394,7 @@ router.get("/inventory-summary", async (req, res) => {
 
     // If no inventory levels, return empty summary
     if (inventoryLevels.length === 0) {
-      return res.json({ success: true, inventory_summary: [] });
+      return res.json({ success: true, location_id: locationId, items: [] });
     }
 
     // collect unique inventory_item_ids
@@ -402,9 +402,9 @@ router.get("/inventory-summary", async (req, res) => {
       new Set(inventoryLevels.map((il) => String(il.inventory_item_id)).filter(Boolean))
     );
 
-    // 2) fetch products (with variants) to map inventory_item_id -> product + variant titles
+    // 2) fetch products (with variants) to map inventory_item_id -> product + variant titles + sku
     // Note: we fetch first page (limit=250) which matches existing pattern in this repo
-    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=title,variants`;
+    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
     const prodResp = await fetch(prodUrl, {
       method: "GET",
       headers: {
@@ -427,7 +427,7 @@ router.get("/inventory-summary", async (req, res) => {
     const prodJson = JSON.parse(prodBody);
     const products = prodJson.products || [];
 
-    // build mapping inventory_item_id -> { product_title, variant_title }
+    // build mapping inventory_item_id -> { product_title, variant_title, sku }
     const mapping = {};
     for (const p of products) {
       const pTitle = p.title || "";
@@ -436,24 +436,26 @@ router.get("/inventory-summary", async (req, res) => {
           mapping[String(v.inventory_item_id)] = {
             product_title: pTitle,
             variant_title: v.title || "",
+            sku: v.sku || null,
           };
         }
       }
     }
 
-    // assemble summary entries
-    const summary = inventoryLevels.map((il) => {
+    // assemble items: include null titles/skus when missing for debugging
+    const items = inventoryLevels.map((il) => {
       const iid = String(il.inventory_item_id);
-      const mapped = mapping[iid] || { product_title: null, variant_title: null };
+      const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
       return {
-        product_title: mapped.product_title,
-        variant_title: mapped.variant_title,
         inventory_item_id: il.inventory_item_id,
         available: il.available,
+        product_title: mapped.product_title,
+        variant_title: mapped.variant_title,
+        sku: mapped.sku,
       };
     });
 
-    return res.json({ success: true, inventory_summary: summary });
+    return res.json({ success: true, location_id: locationId, items });
   } catch (err) {
     console.error("Inventory summary failed:", err);
     return res.status(500).json({ success: false, message: "Failed to build inventory summary" });
