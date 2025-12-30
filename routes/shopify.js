@@ -344,6 +344,122 @@ router.get("/inventory-levels", async (req, res) => {
   }
 });
 
+// Inventory summary: map inventory_item_id -> product + variant titles for a location
+router.get("/inventory-summary", async (req, res) => {
+  const shop = req.query.shop;
+  const locationId = req.query.location_id;
+
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
+    }
+
+    const accessToken = result.rows[0].access_token;
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+    // 1) fetch inventory levels for the location
+    const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
+      locationId
+    )}&limit=250`;
+
+    const invResp = await fetch(invUrl, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const invBody = await invResp.text();
+    if (!invResp.ok) {
+      console.error("Shopify inventory_levels error:", invResp.status, invBody);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch inventory levels",
+        shopifyStatus: invResp.status,
+        shopifyBody: invBody,
+      });
+    }
+
+    const invJson = JSON.parse(invBody);
+    const inventoryLevels = invJson.inventory_levels || [];
+
+    // If no inventory levels, return empty summary
+    if (inventoryLevels.length === 0) {
+      return res.json({ success: true, inventory_summary: [] });
+    }
+
+    // collect unique inventory_item_ids
+    const inventoryItemIds = Array.from(
+      new Set(inventoryLevels.map((il) => String(il.inventory_item_id)).filter(Boolean))
+    );
+
+    // 2) fetch products (with variants) to map inventory_item_id -> product + variant titles
+    // Note: we fetch first page (limit=250) which matches existing pattern in this repo
+    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=title,variants`;
+    const prodResp = await fetch(prodUrl, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const prodBody = await prodResp.text();
+    if (!prodResp.ok) {
+      console.error("Shopify products error:", prodResp.status, prodBody);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch products",
+        shopifyStatus: prodResp.status,
+        shopifyBody: prodBody,
+      });
+    }
+
+    const prodJson = JSON.parse(prodBody);
+    const products = prodJson.products || [];
+
+    // build mapping inventory_item_id -> { product_title, variant_title }
+    const mapping = {};
+    for (const p of products) {
+      const pTitle = p.title || "";
+      for (const v of p.variants || []) {
+        if (v && v.inventory_item_id) {
+          mapping[String(v.inventory_item_id)] = {
+            product_title: pTitle,
+            variant_title: v.title || "",
+          };
+        }
+      }
+    }
+
+    // assemble summary entries
+    const summary = inventoryLevels.map((il) => {
+      const iid = String(il.inventory_item_id);
+      const mapped = mapping[iid] || { product_title: null, variant_title: null };
+      return {
+        product_title: mapped.product_title,
+        variant_title: mapped.variant_title,
+        inventory_item_id: il.inventory_item_id,
+        available: il.available,
+      };
+    });
+
+    return res.json({ success: true, inventory_summary: summary });
+  } catch (err) {
+    console.error("Inventory summary failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to build inventory summary" });
+  }
+});
+
   // Webhook endpoint with HMAC verification
   router.post(
     "/webhooks",
