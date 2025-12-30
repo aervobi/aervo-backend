@@ -190,6 +190,54 @@ router.get("/products", async (req, res) => {
   }
 });
 
+// Example admin API: list orders for a shop
+router.get("/orders", async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
+    }
+
+    const accessToken = result.rows[0].access_token;
+
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+    const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=50`;
+
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const bodyText = await resp.text();
+
+    if (!resp.ok) {
+      console.error("Shopify orders error:", resp.status, bodyText);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch orders",
+        shopifyStatus: resp.status,
+        shopifyBody: bodyText,
+      });
+    }
+
+    const json = JSON.parse(bodyText);
+    return res.json({ success: true, orders: json.orders || [] });
+  } catch (err) {
+    console.error("List orders failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch orders" });
+  }
+});
+
 // Example admin API: list locations for a shop
 router.get("/locations", async (req, res) => {
   const shop = req.query.shop;
