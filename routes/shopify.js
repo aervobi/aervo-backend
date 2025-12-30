@@ -462,6 +462,142 @@ router.get("/inventory-summary", async (req, res) => {
   }
 });
 
+// Insights: reuse inventory-summary logic but compute metrics
+router.get("/insights", async (req, res) => {
+  const shop = req.query.shop;
+  const locationId = req.query.location_id;
+
+  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not installed" });
+    }
+
+    const accessToken = result.rows[0].access_token;
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+    // fetch inventory levels
+    const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
+      locationId
+    )}&limit=250`;
+
+    const invResp = await fetch(invUrl, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const invBody = await invResp.text();
+    if (!invResp.ok) {
+      console.error("Shopify inventory_levels error:", invResp.status, invBody);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch inventory levels",
+        shopifyStatus: invResp.status,
+        shopifyBody: invBody,
+      });
+    }
+
+    const invJson = JSON.parse(invBody);
+    const inventoryLevels = invJson.inventory_levels || [];
+
+    // fetch products to build mapping
+    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
+    const prodResp = await fetch(prodUrl, {
+      method: "GET",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const prodBody = await prodResp.text();
+    if (!prodResp.ok) {
+      console.error("Shopify products error:", prodResp.status, prodBody);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch products",
+        shopifyStatus: prodResp.status,
+        shopifyBody: prodBody,
+      });
+    }
+
+    const prodJson = JSON.parse(prodBody);
+    const products = prodJson.products || [];
+
+    // build mapping inventory_item_id -> { product_title, variant_title, sku }
+    const mapping = {};
+    for (const p of products) {
+      const pTitle = p.title || null;
+      for (const v of p.variants || []) {
+        if (v && v.inventory_item_id) {
+          mapping[String(v.inventory_item_id)] = {
+            product_title: pTitle,
+            variant_title: v.title || null,
+            sku: v.sku || null,
+          };
+        }
+      }
+    }
+
+    // assemble items
+    const items = inventoryLevels.map((il) => {
+      const iid = String(il.inventory_item_id);
+      const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
+      const available = il.available == null ? 0 : Number(il.available);
+      return {
+        inventory_item_id: il.inventory_item_id,
+        available,
+        product_title: mapped.product_title,
+        variant_title: mapped.variant_title,
+        sku: mapped.sku,
+      };
+    });
+
+    // compute metrics
+    const thresholds = { low_stock: 10, overstock: 200 };
+    const total_items = items.length;
+    const total_units = items.reduce((sum, it) => sum + (typeof it.available === "number" ? it.available : Number(it.available || 0)), 0);
+    const missing_sku_count = items.filter((it) => !it.sku).length;
+    const missing_mapping_count = items.filter((it) => it.product_title == null).length;
+
+    const low_stock = items.filter((it) => it.available > 0 && it.available <= thresholds.low_stock);
+    const out_of_stock = items.filter((it) => it.available === 0);
+    const overstock = items.filter((it) => it.available >= thresholds.overstock);
+    const missing_sku = items.filter((it) => !it.sku);
+    const missing_mapping = items.filter((it) => it.product_title == null);
+
+    return res.json({
+      success: true,
+      location_id: locationId,
+      thresholds,
+      totals: {
+        total_items,
+        total_units,
+        missing_sku_count,
+        missing_mapping_count,
+      },
+      low_stock,
+      out_of_stock,
+      overstock,
+      missing_sku,
+      missing_mapping,
+    });
+  } catch (err) {
+    console.error("Insights failed:", err);
+    return res.status(500).json({ success: false, message: "Failed to build insights" });
+  }
+});
+
   // Webhook endpoint with HMAC verification
   router.post(
     "/webhooks",
