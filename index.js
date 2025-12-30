@@ -94,8 +94,36 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
   }
 })();
 
-const mountShopifyRoutes = require("./routes/shopify");
-mountShopifyRoutes(app, pool);
+const shopifyRouter = require("./routes/shopify")(pool);
+app.use("/auth/shopify", shopifyRouter);
+
+// Quick route-list logger to show registered routes at boot
+function listRoutes() {
+  const routes = [];
+  if (!app || !app._router) return console.log("No routes to list");
+  app._router.stack.forEach((middleware) => {
+    if (middleware.route) {
+      // routes registered directly on the app
+      const methods = Object.keys(middleware.route.methods)
+        .map((m) => m.toUpperCase())
+        .join(",");
+      routes.push(`${methods} ${middleware.route.path}`);
+    } else if (middleware.name === "router" && middleware.handle && middleware.handle.stack) {
+      // router middleware
+      middleware.handle.stack.forEach((handler) => {
+        if (handler.route) {
+          const methods = Object.keys(handler.route.methods)
+            .map((m) => m.toUpperCase())
+            .join(",");
+          // If a router is mounted, middleware.regexp may have the mount path but it's hard to extract reliably here — show the route path.
+          routes.push(`${methods} ${handler.route.path}`);
+        }
+      });
+    }
+  });
+  console.log("Registered routes:");
+  routes.forEach((r) => console.log(" -", r));
+}
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");

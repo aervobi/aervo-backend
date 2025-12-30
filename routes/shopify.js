@@ -24,11 +24,11 @@ function verifyHmac(query, secret) {
   return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(query.hmac, "hex"));
 }
 
-module.exports = function mountShopifyRoutes(app, pool) {
+module.exports = function (pool) {
   const router = express.Router();
 
-  // Start OAuth install flow: /shopify/install?shop=storename.myshopify.com
-router.get("/install", async (req, res) => {
+  // Start OAuth install flow: /?shop=storename.myshopify.com (mounted at /auth/shopify)
+  router.get("/", async (req, res) => {
   const shop = req.query.shop;
   if (!shop) return res.status(400).send("Missing shop parameter");
 
@@ -220,5 +220,5 @@ router.get("/products", async (req, res) => {
     }
   );
 
-  app.use("/shopify", router);
+  return router;
 };
