@@ -208,7 +208,8 @@ router.get("/orders", async (req, res) => {
     const accessToken = result.rows[0].access_token;
 
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-    const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=50`;
+    const fields = "id,name,created_at,processed_at,total_price,subtotal_price,total_tax,total_discounts,currency,financial_status,fulfillment_status,line_items";
+    const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=50&fields=${encodeURIComponent(fields)}`;
 
     const resp = await fetch(url, {
       method: "GET",
