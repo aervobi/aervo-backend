@@ -238,15 +238,13 @@ router.get("/locations", async (req, res) => {
   }
 });
 
-// Example admin API: get inventory levels for an inventory_item + location
+// Example admin API: get inventory levels for a location (required)
 router.get("/inventory-levels", async (req, res) => {
   const shop = req.query.shop;
-  const inventoryItemId = req.query.inventory_item_id;
   const locationId = req.query.location_id;
 
   if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-  if (!inventoryItemId && !locationId)
-    return res.status(400).json({ success: false, message: "Missing inventory_item_id or location_id param" });
+  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
 
   try {
     const result = await pool.query(
@@ -261,11 +259,7 @@ router.get("/inventory-levels", async (req, res) => {
     const accessToken = result.rows[0].access_token;
 
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-    const params = [];
-    if (inventoryItemId) params.push(`inventory_item_ids=${encodeURIComponent(inventoryItemId)}`);
-    if (locationId) params.push(`location_ids=${encodeURIComponent(locationId)}`);
-    const queryString = params.length ? `?${params.join("&")}` : "";
-
+    const queryString = `?location_ids=${encodeURIComponent(locationId)}&limit=250`;
     const url = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json${queryString}`;
 
     const resp = await fetch(url, {
