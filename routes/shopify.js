@@ -211,6 +211,8 @@ router.get("/orders", async (req, res) => {
     const fields = "id,name,created_at,processed_at,total_price,subtotal_price,total_tax,total_discounts,currency,financial_status,fulfillment_status,line_items";
     const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=50&fields=${encodeURIComponent(fields)}`;
 
+    console.log("ORDERS URL:", url);
+
     const resp = await fetch(url, {
       method: "GET",
       headers: {
@@ -219,10 +221,13 @@ router.get("/orders", async (req, res) => {
       },
     });
 
+    console.log("ORDERS STATUS:", resp.status);
+
     const bodyText = await resp.text();
 
     if (!resp.ok) {
       console.error("Shopify orders error:", resp.status, bodyText);
+      console.log("ORDERS BODY (truncated):", bodyText ? bodyText.slice(0, 300) : "");
       return res.status(500).json({
         success: false,
         message: "Failed to fetch orders",
