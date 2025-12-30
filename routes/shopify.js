@@ -44,7 +44,7 @@ module.exports = function (pool) {
       [shop, state]
     );
 
-    const redirectUri = `${buildAppUrl()}/shopify/callback`;
+    const redirectUri = `${buildAppUrl()}/auth/shopify/callback`;
     const scopes = (process.env.SHOPIFY_SCOPES || "read_products").replace(/\s+/g, "");
 
     const installUrl =
