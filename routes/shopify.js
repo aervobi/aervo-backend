@@ -237,12 +237,172 @@ router.get("/orders", async (req, res) => {
     }
 
     const json = JSON.parse(bodyText);
-    return res.json({ success: true, orders: json.orders || [] });
+      return res.json({ success: true, orders: json.orders || [] });
   } catch (err) {
     console.error("List orders failed:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch orders" });
   }
 });
+
+  // Sales summary for dashboard (read-only)
+  router.get("/sales-summary", async (req, res) => {
+    const shop = req.query.shop;
+    const locationId = req.query.location_id;
+
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
+
+      const accessToken = result.rows[0].access_token;
+
+      // Use the 2024-01 Admin API per requirements and limit to last 24 hours
+      const apiVersion = "2024-01";
+      const createdAtMin = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+      const fields = [
+        "id",
+        "name",
+        "total_price",
+        "customer",
+        "shipping_address",
+        "line_items",
+        "created_at",
+        "fulfillments",
+        "cancelled_at",
+      ].join(",");
+
+      // fetch up to 250 orders created in the last 24 hours
+      const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(
+        createdAtMin
+      )}&fields=${encodeURIComponent(fields)}`;
+
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const bodyText = await resp.text();
+
+      if (!resp.ok) {
+        console.error("Shopify sales-summary error:", resp.status, bodyText);
+        // Per requirement: return HTTP 200 with empty summary and log the error
+        return res.status(200).json({
+          orders_count: 0,
+          items_sold: 0,
+          gross_sales: 0,
+          top_product: null,
+          orders: [],
+        });
+      }
+
+      let json;
+      try {
+        json = JSON.parse(bodyText);
+      } catch (parseErr) {
+        console.error("Failed to parse Shopify orders response:", parseErr, bodyText.slice(0, 1000));
+        return res.status(200).json({
+          orders_count: 0,
+          items_sold: 0,
+          gross_sales: 0,
+          top_product: null,
+          orders: [],
+        });
+      }
+
+      const rawOrders = Array.isArray(json.orders) ? json.orders : [];
+
+      // Optionally filter by location_id if provided: keep orders that have at least one fulfillment with matching location_id
+      const filteredOrders = locationId
+        ? rawOrders.filter((o) => {
+            try {
+              if (!Array.isArray(o.fulfillments) || o.fulfillments.length === 0) return false;
+              return o.fulfillments.some((f) => String(f.location_id) === String(locationId));
+            } catch (e) {
+              return false;
+            }
+          })
+        : rawOrders;
+
+      if (filteredOrders.length === 0) {
+        return res.json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
+      }
+
+      let itemsSold = 0;
+      let grossSales = 0;
+      const productCounts = Object.create(null);
+
+      const ordersOut = filteredOrders.map((o) => {
+        const orderLineItems = Array.isArray(o.line_items) ? o.line_items : [];
+
+        // sum per order
+        for (const li of orderLineItems) {
+          const qty = Number(li.quantity || 0);
+          itemsSold += qty;
+          const title = li.title || "";
+          productCounts[title] = (productCounts[title] || 0) + qty;
+        }
+
+        // total_price sometimes string; parse safely
+        const tp = parseFloat(o.total_price || "0") || 0;
+        grossSales += tp;
+
+        const customer = o.customer || {};
+        const customerName = customer.first_name || customer.last_name ? `${customer.first_name || ""} ${customer.last_name || ""}`.trim() : customer.name || null;
+
+        return {
+          id: o.id ? String(o.id) : null,
+          name: o.name || null,
+          total_price: o.total_price || "0",
+          customer: {
+            name: customerName || null,
+            email: customer.email || null,
+          },
+          shipping_address: {
+            city: o.shipping_address && o.shipping_address.city ? o.shipping_address.city : null,
+            province: o.shipping_address && o.shipping_address.province ? o.shipping_address.province : null,
+            country: o.shipping_address && o.shipping_address.country ? o.shipping_address.country : null,
+          },
+          line_items: orderLineItems.map((li) => ({ title: li.title || "", quantity: Number(li.quantity || 0) })),
+        };
+      });
+
+      // determine top product
+      let topProduct = null;
+      let topQty = 0;
+      for (const title of Object.keys(productCounts)) {
+        if (productCounts[title] > topQty) {
+          topQty = productCounts[title];
+          topProduct = title;
+        }
+      }
+
+      // ensure numeric types
+      const summary = {
+        orders_count: ordersOut.length,
+        items_sold: itemsSold,
+        gross_sales: Number(Number(grossSales).toFixed(2)),
+        top_product: topProduct || null,
+        orders: ordersOut,
+      };
+
+      return res.json(summary);
+    } catch (err) {
+      console.error("Sales summary failed:", err);
+      // On any error, return 200 with empty summary per requirement
+      return res.status(200).json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
+    }
+  });
 
 // Example admin API: list locations for a shop
 router.get("/locations", async (req, res) => {
