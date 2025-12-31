@@ -322,17 +322,16 @@ router.get("/orders", async (req, res) => {
 
       const rawOrders = Array.isArray(json.orders) ? json.orders : [];
 
-      // Optionally filter by location_id if provided: keep orders that have at least one fulfillment with matching location_id
       const filteredOrders = locationId
-        ? rawOrders.filter((o) => {
-            try {
-              if (!Array.isArray(o.fulfillments) || o.fulfillments.length === 0) return false;
-              return o.fulfillments.some((f) => String(f.location_id) === String(locationId));
-            } catch (e) {
-              return false;
-            }
-          })
-        : rawOrders;
+  ? rawOrders.filter((o) => {
+      // ✅ If no fulfillments yet, keep the order (it’s still a sale)
+      if (!Array.isArray(o.fulfillments) || o.fulfillments.length === 0) return true;
+
+      return o.fulfillments.some(
+        (f) => String(f.location_id) === String(locationId)
+      );
+    })
+  : rawOrders;
 
       if (filteredOrders.length === 0) {
         return res.json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
