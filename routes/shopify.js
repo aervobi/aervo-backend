@@ -250,6 +250,11 @@ router.get("/orders", async (req, res) => {
     const locationId = req.query.location_id;
 
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+// ✅ Prevent stale 304 responses (VERY IMPORTANT)
+res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+res.set("Pragma", "no-cache");
+res.set("Expires", "0");
+res.set("Surrogate-Control", "no-store");
 
     try {
       const result = await pool.query(
