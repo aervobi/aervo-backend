@@ -327,19 +327,8 @@ res.set("Surrogate-Control", "no-store");
 
       const rawOrders = Array.isArray(json.orders) ? json.orders : [];
 
-const filteredOrders = locationId
-  ? rawOrders.filter((o) => {
-      // If order has fulfillments, match by location
-      if (Array.isArray(o.fulfillments) && o.fulfillments.length > 0) {
-        return o.fulfillments.some(
-          (f) => String(f.location_id) === String(locationId)
-        );
-      }
-
-      // If NOT fulfilled yet, still count the sale
-      return true;
-    })
-  : rawOrders;
+// TEMP: count all orders regardless of fulfillment/location
+const filteredOrders = rawOrders;
 
       if (filteredOrders.length === 0) {
         return res.json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
