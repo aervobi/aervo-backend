@@ -270,24 +270,24 @@ res.set("Surrogate-Control", "no-store");
 
       // Use the 2024-01 Admin API per requirements and limit to last 24 hours
       const apiVersion = "2024-01";
-      const createdAtMin = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
       const fields = [
-        "id",
-        "name",
-        "total_price",
-        "customer",
-        "shipping_address",
-        "line_items",
-        "created_at",
-        "fulfillments",
-        "cancelled_at",
-      ].join(",");
+  "id",
+  "name",
+  "total_price",
+  "customer",
+  "shipping_address",
+  "line_items",
+  "created_at",
+  "cancelled_at",
+  "financial_status",
+  "fulfillment_status",
+].join(",");
 
       // fetch up to 250 orders created in the last 24 hours
-      const url = `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(
-        createdAtMin
-      )}&fields=${encodeURIComponent(fields)}`;
+   const url =
+  `https://${shop}/admin/api/${apiVersion}/orders.json` +
+  `?status=any&limit=50&order=created_at%20desc&fields=${encodeURIComponent(fields)}`;
 
       const resp = await fetch(url, {
         method: "GET",
