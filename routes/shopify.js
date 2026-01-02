@@ -322,14 +322,17 @@ router.get("/orders", async (req, res) => {
 
       const rawOrders = Array.isArray(json.orders) ? json.orders : [];
 
-      const filteredOrders = locationId
+const filteredOrders = locationId
   ? rawOrders.filter((o) => {
-      // ✅ If no fulfillments yet, keep the order (it’s still a sale)
-      if (!Array.isArray(o.fulfillments) || o.fulfillments.length === 0) return true;
+      // If order has fulfillments, match by location
+      if (Array.isArray(o.fulfillments) && o.fulfillments.length > 0) {
+        return o.fulfillments.some(
+          (f) => String(f.location_id) === String(locationId)
+        );
+      }
 
-      return o.fulfillments.some(
-        (f) => String(f.location_id) === String(locationId)
-      );
+      // If NOT fulfilled yet, still count the sale
+      return true;
     })
   : rawOrders;
 
