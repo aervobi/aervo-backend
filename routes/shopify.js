@@ -246,21 +246,26 @@ router.get("/orders", async (req, res) => {
 
   // Sales summary for dashboard (read-only)
   router.get("/sales-summary", async (req, res) => {
-    const shop = req.query.shop;
-    const locationId = req.query.location_id;
+  const shop = req.query.shop;
+  const locationId = req.query.location_id;
 
-    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-// ✅ Prevent stale 304 responses (VERY IMPORTANT)
-res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-res.set("Pragma", "no-cache");
-res.set("Expires", "0");
-res.set("Surrogate-Control", "no-store");
+  if (!shop)
+    return res.status(400).json({ success: false, message: "Missing shop param" });
 
-    try {
-      const result = await pool.query(
-        "SELECT access_token FROM shops WHERE shop_origin = $1",
-        [shop]
-      );
+  // 🔴 ADD IT RIGHT HERE
+  res.set("X-Aervo-Debug", "sales-summary-v1");
+
+  // prevent caching (keep these)
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.set("Surrogate-Control", "no-store");
+
+  try {
+    const result = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
 
       if (result.rows.length === 0) {
         return res.status(404).json({ success: false, message: "Shop not installed" });
