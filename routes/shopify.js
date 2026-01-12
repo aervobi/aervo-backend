@@ -252,8 +252,7 @@ router.get("/orders", async (req, res) => {
   if (!shop)
     return res.status(400).json({ success: false, message: "Missing shop param" });
 res.set("X-Aervo-Debug", "sales-summary-v1");
-  // 🔴 ADD IT RIGHT HERE
-  res.set("X-Aervo-Debug", "sales-summary-v1");
+
 
   // prevent caching (keep these)
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -285,8 +284,6 @@ const fields = [
   "id",
   "name",
   "total_price",
-  "customer",
-  "shipping_address",
   "line_items",
   "created_at",
   "cancelled_at",
@@ -370,25 +367,20 @@ const filteredOrders = rawOrders;
         const tp = parseFloat(o.total_price || "0") || 0;
         grossSales += tp;
 
-        const customer = o.customer || {};
-        const customerName = customer.first_name || customer.last_name ? `${customer.first_name || ""} ${customer.last_name || ""}`.trim() : customer.name || null;
 
-        return {
-          id: o.id ? String(o.id) : null,
-          name: o.name || null,
-          total_price: o.total_price || "0",
-          customer: {
-            name: customerName || null,
-            email: customer.email || null,
-          },
-          shipping_address: {
-            city: o.shipping_address && o.shipping_address.city ? o.shipping_address.city : null,
-            province: o.shipping_address && o.shipping_address.province ? o.shipping_address.province : null,
-            country: o.shipping_address && o.shipping_address.country ? o.shipping_address.country : null,
-          },
-          line_items: orderLineItems.map((li) => ({ title: li.title || "", quantity: Number(li.quantity || 0) })),
-        };
-      });
+      return {
+  id: o.id ? String(o.id) : null,
+  name: o.name || null,
+  total_price: o.total_price || "0",
+  created_at: o.created_at || null,
+  financial_status: o.financial_status || null,
+  fulfillment_status: o.fulfillment_status || null,
+  line_items: orderLineItems.map((li) => ({
+    title: li.title || "",
+    quantity: Number(li.quantity || 0),
+  })),
+};
+});
 
       // determine top product
       let topProduct = null;
