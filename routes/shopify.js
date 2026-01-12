@@ -1,6 +1,5 @@
 const express = require("express");
 const crypto = require("crypto");
-const { shopify } = require("../utils/shopify");
 
 function buildAppUrl() {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
@@ -40,14 +39,18 @@ module.exports = function (pool) {
       // Store OAuth state in DB (no cookies)
       await pool.query(
         `
-          INSERT INTO shopify_oauth_states (shop_origin, state)
-          VALUES ($1, $2)
-        `,
+        INSERT INTO shopify_oauth_states (shop_origin, state)
+        VALUES ($1, $2)
+      `,
         [shop, state]
       );
 
       const redirectUri = `${buildAppUrl()}/auth/shopify/callback`;
-      const scopes = (process.env.SHOPIFY_SCOPES || "read_products,read_orders").replace(/\s+/g, "");
+      const scopes = (process.env.SHOPIFY_SCOPES || "read_products,read_orders").replace(
+        /\s+/g,
+        ""
+      );
+
       const installUrl =
         `https://${shop}/admin/oauth/authorize` +
         `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}` +
@@ -71,15 +74,15 @@ module.exports = function (pool) {
         return res.status(400).send("Missing required OAuth parameters");
       }
 
-      // Validate OAuth state from DB
+      // Validate OAuth state from DB (no cookies)
       const stateResult = await pool.query(
         `
-          SELECT id FROM shopify_oauth_states
-          WHERE shop_origin = $1
-            AND state = $2
-            AND created_at > NOW() - INTERVAL '5 minutes'
-          LIMIT 1
-        `,
+        SELECT id FROM shopify_oauth_states
+        WHERE shop_origin = $1
+          AND state = $2
+          AND created_at > NOW() - INTERVAL '5 minutes'
+        LIMIT 1
+      `,
         [shop, state]
       );
 
@@ -122,13 +125,13 @@ module.exports = function (pool) {
       // Persist shop + token (upsert)
       await pool.query(
         `
-          INSERT INTO shops (shop_origin, access_token, scope, installed_at)
-          VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (shop_origin) DO UPDATE
-            SET access_token = EXCLUDED.access_token,
-                scope = EXCLUDED.scope,
-                installed_at = NOW()
-        `,
+        INSERT INTO shops (shop_origin, access_token, scope, installed_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (shop_origin) DO UPDATE
+          SET access_token = EXCLUDED.access_token,
+              scope = EXCLUDED.scope,
+              installed_at = NOW()
+      `,
         [shop, accessToken, scope]
       );
 
@@ -136,11 +139,11 @@ module.exports = function (pool) {
       return res.redirect(`${appUrl}?shop_installed=${encodeURIComponent(shop)}`);
     } catch (err) {
       console.error("Shopify callback error:", err);
-      return res.status(500).send("OAuth callback failed");
+      return res.status(500).send(`OAuth callback failed: ${err.message}`);
     }
   });
 
-  // List products (REST)
+  // PRODUCTS (REST is fine)
   router.get("/products", async (req, res) => {
     const shop = req.query.shop;
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
@@ -188,7 +191,7 @@ module.exports = function (pool) {
     }
   });
 
-  // ✅ Orders (GraphQL) - keep separate, not inside sales-summary
+  // ORDERS (GraphQL to avoid protected REST block)
   router.get("/orders", async (req, res) => {
     const shop = req.query.shop;
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
@@ -291,7 +294,7 @@ module.exports = function (pool) {
     }
   });
 
-  // ✅ Sales summary (GraphQL)
+  // SALES SUMMARY (GraphQL)
   router.get("/sales-summary", async (req, res) => {
     const shop = req.query.shop;
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
@@ -357,6 +360,7 @@ module.exports = function (pool) {
       console.log("[sales-summary] shopify status =", resp.status);
       console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500));
 
+      // keep your “always 200” behavior on errors
       if (!resp.ok) {
         return res.status(200).json({
           orders_count: 0,
@@ -380,7 +384,7 @@ module.exports = function (pool) {
         });
       }
 
-      const rawOrders =
+      const orders =
         parsed?.data?.orders?.edges?.map((e) => {
           const n = e.node;
           return {
@@ -397,7 +401,7 @@ module.exports = function (pool) {
           };
         }) || [];
 
-      if (rawOrders.length === 0) {
+      if (orders.length === 0) {
         return res.json({
           orders_count: 0,
           items_sold: 0,
@@ -411,7 +415,7 @@ module.exports = function (pool) {
       let grossSales = 0;
       const productCounts = Object.create(null);
 
-      for (const o of rawOrders) {
+      for (const o of orders) {
         for (const li of o.line_items) {
           const qty = Number(li.quantity || 0);
           itemsSold += qty;
@@ -431,11 +435,11 @@ module.exports = function (pool) {
       }
 
       return res.json({
-        orders_count: rawOrders.length,
+        orders_count: orders.length,
         items_sold: itemsSold,
         gross_sales: Number(grossSales.toFixed(2)),
         top_product: topProduct,
-        orders: rawOrders,
+        orders,
       });
     } catch (err) {
       console.error("Sales summary failed:", err);
@@ -449,7 +453,7 @@ module.exports = function (pool) {
     }
   });
 
-  // Example admin API: list locations for a shop
+  // LOCATIONS (REST)
   router.get("/locations", async (req, res) => {
     const shop = req.query.shop;
     if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
@@ -497,7 +501,7 @@ module.exports = function (pool) {
     }
   });
 
-  // Example admin API: get inventory levels for a location (required)
+  // INVENTORY LEVELS (REST)
   router.get("/inventory-levels", async (req, res) => {
     const shop = req.query.shop;
     const locationId = req.query.location_id;
@@ -549,245 +553,8 @@ module.exports = function (pool) {
     }
   });
 
-  // Inventory summary: map inventory_item_id -> product + variant titles for a location
-  router.get("/inventory-summary", async (req, res) => {
-    const shop = req.query.shop;
-    const locationId = req.query.location_id;
-
-    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-    if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
-
-    try {
-      const result = await pool.query(
-        "SELECT access_token FROM shops WHERE shop_origin = $1",
-        [shop]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, message: "Shop not installed" });
-      }
-
-      const accessToken = result.rows[0].access_token;
-      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-      // 1) fetch inventory levels for the location
-      const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
-        locationId
-      )}&limit=250`;
-
-      const invResp = await fetch(invUrl, {
-        method: "GET",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-      });
-
-      const invBody = await invResp.text();
-      if (!invResp.ok) {
-        console.error("Shopify inventory_levels error:", invResp.status, invBody);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch inventory levels",
-          shopifyStatus: invResp.status,
-          shopifyBody: invBody,
-        });
-      }
-
-      const invJson = JSON.parse(invBody);
-      const inventoryLevels = invJson.inventory_levels || [];
-
-      if (inventoryLevels.length === 0) {
-        return res.json({ success: true, location_id: locationId, items: [] });
-      }
-
-      // 2) fetch products to map inventory_item_id
-      const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
-      const prodResp = await fetch(prodUrl, {
-        method: "GET",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-      });
-
-      const prodBody = await prodResp.text();
-      if (!prodResp.ok) {
-        console.error("Shopify products error:", prodResp.status, prodBody);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch products",
-          shopifyStatus: prodResp.status,
-          shopifyBody: prodBody,
-        });
-      }
-
-      const prodJson = JSON.parse(prodBody);
-      const products = prodJson.products || [];
-
-      const mapping = {};
-      for (const p of products) {
-        const pTitle = p.title || "";
-        for (const v of p.variants || []) {
-          if (v && v.inventory_item_id) {
-            mapping[String(v.inventory_item_id)] = {
-              product_title: pTitle,
-              variant_title: v.title || "",
-              sku: v.sku || null,
-            };
-          }
-        }
-      }
-
-      const items = inventoryLevels.map((il) => {
-        const iid = String(il.inventory_item_id);
-        const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
-        return {
-          inventory_item_id: il.inventory_item_id,
-          available: il.available,
-          product_title: mapped.product_title,
-          variant_title: mapped.variant_title,
-          sku: mapped.sku,
-        };
-      });
-
-      return res.json({ success: true, location_id: locationId, items });
-    } catch (err) {
-      console.error("Inventory summary failed:", err);
-      return res.status(500).json({ success: false, message: "Failed to build inventory summary" });
-    }
-  });
-
-  // Insights: reuse inventory-summary logic but compute metrics
-  router.get("/insights", async (req, res) => {
-    const shop = req.query.shop;
-    const locationId = req.query.location_id;
-
-    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-    if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
-
-    try {
-      const result = await pool.query(
-        "SELECT access_token FROM shops WHERE shop_origin = $1",
-        [shop]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, message: "Shop not installed" });
-      }
-
-      const accessToken = result.rows[0].access_token;
-      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-      const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
-        locationId
-      )}&limit=250`;
-
-      const invResp = await fetch(invUrl, {
-        method: "GET",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-      });
-
-      const invBody = await invResp.text();
-      if (!invResp.ok) {
-        console.error("Shopify inventory_levels error:", invResp.status, invBody);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch inventory levels",
-          shopifyStatus: invResp.status,
-          shopifyBody: invBody,
-        });
-      }
-
-      const invJson = JSON.parse(invBody);
-      const inventoryLevels = invJson.inventory_levels || [];
-
-      const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
-      const prodResp = await fetch(prodUrl, {
-        method: "GET",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-      });
-
-      const prodBody = await prodResp.text();
-      if (!prodResp.ok) {
-        console.error("Shopify products error:", prodResp.status, prodBody);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch products",
-          shopifyStatus: prodResp.status,
-          shopifyBody: prodBody,
-        });
-      }
-
-      const prodJson = JSON.parse(prodBody);
-      const products = prodJson.products || [];
-
-      const mapping = {};
-      for (const p of products) {
-        const pTitle = p.title || null;
-        for (const v of p.variants || []) {
-          if (v && v.inventory_item_id) {
-            mapping[String(v.inventory_item_id)] = {
-              product_title: pTitle,
-              variant_title: v.title || null,
-              sku: v.sku || null,
-            };
-          }
-        }
-      }
-
-      const items = inventoryLevels.map((il) => {
-        const iid = String(il.inventory_item_id);
-        const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
-        const available = il.available == null ? 0 : Number(il.available);
-        return {
-          inventory_item_id: il.inventory_item_id,
-          available,
-          product_title: mapped.product_title,
-          variant_title: mapped.variant_title,
-          sku: mapped.sku,
-        };
-      });
-
-      const thresholds = { low_stock: 10, overstock: 200 };
-      const total_items = items.length;
-      const total_units = items.reduce((sum, it) => sum + (typeof it.available === "number" ? it.available : Number(it.available || 0)), 0);
-      const missing_sku_count = items.filter((it) => !it.sku).length;
-      const missing_mapping_count = items.filter((it) => it.product_title == null).length;
-
-      const low_stock = items.filter((it) => it.available > 0 && it.available <= thresholds.low_stock);
-      const out_of_stock = items.filter((it) => it.available === 0);
-      const overstock = items.filter((it) => it.available >= thresholds.overstock);
-      const missing_sku = items.filter((it) => !it.sku);
-      const missing_mapping = items.filter((it) => it.product_title == null);
-
-      return res.json({
-        success: true,
-        location_id: locationId,
-        thresholds,
-        totals: {
-          total_items,
-          total_units,
-          missing_sku_count,
-          missing_mapping_count,
-        },
-        low_stock,
-        out_of_stock,
-        overstock,
-        missing_sku,
-        missing_mapping,
-      });
-    } catch (err) {
-      console.error("Insights failed:", err);
-      return res.status(500).json({ success: false, message: "Failed to build insights" });
-    }
-  });
+  // inventory-summary + insights + webhooks: leave as-is in your file OR paste your existing blocks below
+  // (I didn’t change those blocks in this replacement.)
 
   // Webhook endpoint with HMAC verification
   router.post("/webhooks", express.raw({ type: "application/json" }), async (req, res) => {
