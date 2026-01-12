@@ -45,8 +45,7 @@ module.exports = function (pool) {
     );
 
     const redirectUri = `${buildAppUrl()}/auth/shopify/callback`;
-    const scopes = (process.env.SHOPIFY_SCOPES || "read_products").replace(/\s+/g, "");
-
+    const scopes = (process.env.SHOPIFY_SCOPES || "read_products,read_orders").replace(/\s+/g, "");
     const installUrl =
       `https://${shop}/admin/oauth/authorize` +
       `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}` +
@@ -158,17 +157,47 @@ router.get("/products", async (req, res) => {
 
     const accessToken = result.rows[0].access_token;
 
-    // ✅ Use direct Admin REST call (most reliable)
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-    const url = `https://${shop}/admin/api/${apiVersion}/products.json?limit=10`;
+   const graphqlUrl = `https://${shop}/admin/api/2024-01/graphql.json`;
 
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
+const query = `
+  query Orders($query: String!) {
+    orders(first: 50, query: $query, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          totalPriceSet {
+            shopMoney {
+              amount
+            }
+          }
+          lineItems(first: 50) {
+            edges {
+              node {
+                title
+                quantity
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const variables = {
+  query: `created_at:>=${createdAtMin}`
+};
+
+const resp = await fetch(graphqlUrl, {
+  method: "POST",
+  headers: {
+    "X-Shopify-Access-Token": accessToken,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ query, variables }),
+});
 
     const bodyText = await resp.text();
 
@@ -339,7 +368,17 @@ console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500)
         });
       }
 
-      const rawOrders = Array.isArray(json.orders) ? json.orders : [];
+      const rawOrders =
+  json?.data?.orders?.edges?.map(e => ({
+    id: e.node.id,
+    name: e.node.name,
+    created_at: e.node.createdAt,
+    total_price: e.node.totalPriceSet.shopMoney.amount,
+    line_items: e.node.lineItems.edges.map(li => ({
+      title: li.node.title,
+      quantity: li.node.quantity
+    }))
+  })) || [];
 
 // TEMP: count all orders regardless of fulfillment/location
 const filteredOrders = rawOrders;
