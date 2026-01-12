@@ -251,7 +251,7 @@ router.get("/orders", async (req, res) => {
 
   if (!shop)
     return res.status(400).json({ success: false, message: "Missing shop param" });
-
+res.set("X-Aervo-Debug", "sales-summary-v1");
   // 🔴 ADD IT RIGHT HERE
   res.set("X-Aervo-Debug", "sales-summary-v1");
 
@@ -273,13 +273,13 @@ router.get("/orders", async (req, res) => {
 
       const accessToken = result.rows[0].access_token;
 
-    // Use the 2024-01 Admin API
+   // Use the 2024-01 Admin API
 const apiVersion = "2024-01";
 
-// Orders created today (midnight → now)
-const startOfToday = new Date();
-startOfToday.setHours(0, 0, 0, 0);
-const createdAtMin = startOfToday.toISOString();
+// Debug window: last X days (defaults to 30)
+// This avoids timezone "today" issues while you test.
+const daysBack = Number(req.query.days_back || 30);
+const createdAtMin = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
 const fields = [
   "id",
@@ -300,6 +300,9 @@ const url =
   `&created_at_min=${encodeURIComponent(createdAtMin)}` +
   `&fields=${encodeURIComponent(fields)}`;
 
+console.log("[sales-summary] shop =", shop);
+console.log("[sales-summary] createdAtMin =", createdAtMin);
+console.log("[sales-summary] url =", url);
     
       const resp = await fetch(url, {
         method: "GET",
@@ -310,6 +313,8 @@ const url =
       });
 
       const bodyText = await resp.text();
+      console.log("[sales-summary] shopify status =", resp.status);
+console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500));
 
       if (!resp.ok) {
         console.error("Shopify sales-summary error:", resp.status, bodyText);
