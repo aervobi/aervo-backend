@@ -273,10 +273,15 @@ router.get("/orders", async (req, res) => {
 
       const accessToken = result.rows[0].access_token;
 
-      // Use the 2024-01 Admin API per requirements and limit to last 24 hours
-      const apiVersion = "2024-01";
+    // Use the 2024-01 Admin API
+const apiVersion = "2024-01";
 
-      const fields = [
+// Orders created today (midnight → now)
+const startOfToday = new Date();
+startOfToday.setHours(0, 0, 0, 0);
+const createdAtMin = startOfToday.toISOString();
+
+const fields = [
   "id",
   "name",
   "total_price",
@@ -288,17 +293,14 @@ router.get("/orders", async (req, res) => {
   "financial_status",
   "fulfillment_status",
 ].join(",");
+
 const url =
   `https://${shop}/admin/api/${apiVersion}/orders.json` +
   `?status=any&limit=50&order=created_at%20desc` +
   `&created_at_min=${encodeURIComponent(createdAtMin)}` +
   `&fields=${encodeURIComponent(fields)}`;
 
-      // fetch up to 250 orders created in the last 24 hours
-   const url =
-  `https://${shop}/admin/api/${apiVersion}/orders.json` +
-  `?status=any&limit=50&order=created_at%20desc&fields=${encodeURIComponent(fields)}`;
-
+    
       const resp = await fetch(url, {
         method: "GET",
         headers: {
