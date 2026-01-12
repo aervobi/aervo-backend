@@ -288,6 +288,11 @@ router.get("/orders", async (req, res) => {
   "financial_status",
   "fulfillment_status",
 ].join(",");
+const url =
+  `https://${shop}/admin/api/${apiVersion}/orders.json` +
+  `?status=any&limit=50&order=created_at%20desc` +
+  `&created_at_min=${encodeURIComponent(createdAtMin)}` +
+  `&fields=${encodeURIComponent(fields)}`;
 
       // fetch up to 250 orders created in the last 24 hours
    const url =
