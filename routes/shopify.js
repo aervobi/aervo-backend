@@ -1,4 +1,3 @@
-
 const express = require("express");
 const crypto = require("crypto");
 const { shopify } = require("../utils/shopify");
@@ -21,7 +20,10 @@ function verifyHmac(query, secret) {
     .join("&");
 
   const hmac = crypto.createHmac("sha256", secret).update(sorted).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(query.hmac, "hex"));
+  return crypto.timingSafeEqual(
+    Buffer.from(hmac, "hex"),
+    Buffer.from(query.hmac, "hex")
+  );
 }
 
 module.exports = function (pool) {
@@ -29,66 +31,66 @@ module.exports = function (pool) {
 
   // Start OAuth install flow: /?shop=storename.myshopify.com (mounted at /auth/shopify)
   router.get("/", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) return res.status(400).send("Missing shop parameter");
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).send("Missing shop parameter");
 
-  try {
-    const state = crypto.randomBytes(16).toString("hex");
+    try {
+      const state = crypto.randomBytes(16).toString("hex");
 
-    // ✅ Store OAuth state in DB (no cookies)
-    await pool.query(
-      `
-        INSERT INTO shopify_oauth_states (shop_origin, state)
-        VALUES ($1, $2)
-      `,
-      [shop, state]
-    );
+      // Store OAuth state in DB (no cookies)
+      await pool.query(
+        `
+          INSERT INTO shopify_oauth_states (shop_origin, state)
+          VALUES ($1, $2)
+        `,
+        [shop, state]
+      );
 
-    const redirectUri = `${buildAppUrl()}/auth/shopify/callback`;
-    const scopes = (process.env.SHOPIFY_SCOPES || "read_products,read_orders").replace(/\s+/g, "");
-    const installUrl =
-      `https://${shop}/admin/oauth/authorize` +
-      `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}` +
-      `&scope=${encodeURIComponent(scopes)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&state=${state}`;
+      const redirectUri = `${buildAppUrl()}/auth/shopify/callback`;
+      const scopes = (process.env.SHOPIFY_SCOPES || "read_products,read_orders").replace(/\s+/g, "");
+      const installUrl =
+        `https://${shop}/admin/oauth/authorize` +
+        `?client_id=${encodeURIComponent(process.env.SHOPIFY_API_KEY || "")}` +
+        `&scope=${encodeURIComponent(scopes)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&state=${state}`;
 
-    console.log("OAuth redirectUri =", redirectUri);
-    return res.redirect(installUrl);
-  } catch (err) {
-  console.error("Shopify callback error:", err);
-  return res.status(500).send(`OAuth callback failed: ${err.message}`);
-}
-});
+      console.log("OAuth redirectUri =", redirectUri);
+      return res.redirect(installUrl);
+    } catch (err) {
+      console.error("OAuth start error:", err);
+      return res.status(500).send(`OAuth start failed: ${err.message}`);
+    }
+  });
 
   // OAuth callback
   router.get("/callback", async (req, res) => {
     try {
       const { shop, hmac, code, state } = req.query;
-      if (!shop || !hmac || !code || !state)
-  return res.status(400).send("Missing required OAuth parameters");
+      if (!shop || !hmac || !code || !state) {
+        return res.status(400).send("Missing required OAuth parameters");
+      }
 
-// ✅ Validate OAuth state from DB (no cookies)
-const stateResult = await pool.query(
-  `
-    SELECT id FROM shopify_oauth_states
-    WHERE shop_origin = $1
-      AND state = $2
-      AND created_at > NOW() - INTERVAL '5 minutes'
-    LIMIT 1
-  `,
-  [shop, state]
-);
+      // Validate OAuth state from DB
+      const stateResult = await pool.query(
+        `
+          SELECT id FROM shopify_oauth_states
+          WHERE shop_origin = $1
+            AND state = $2
+            AND created_at > NOW() - INTERVAL '5 minutes'
+          LIMIT 1
+        `,
+        [shop, state]
+      );
 
-if (stateResult.rows.length === 0) {
-  return res.status(400).send("Invalid OAuth state");
-}
+      if (stateResult.rows.length === 0) {
+        return res.status(400).send("Invalid OAuth state");
+      }
 
-// one-time use: clean it up
-await pool.query(
-  `DELETE FROM shopify_oauth_states WHERE id = $1`,
-  [stateResult.rows[0].id]
-);
+      // one-time use: clean it up
+      await pool.query(`DELETE FROM shopify_oauth_states WHERE id = $1`, [
+        stateResult.rows[0].id,
+      ]);
 
       // Validate HMAC
       if (!verifyHmac(req.query, process.env.SHOPIFY_API_SECRET || "")) {
@@ -130,7 +132,6 @@ await pool.query(
         [shop, accessToken, scope]
       );
 
-      // Redirect back to app or show success
       const appUrl = buildAppUrl() || "/";
       return res.redirect(`${appUrl}?shop_installed=${encodeURIComponent(shop)}`);
     } catch (err) {
@@ -139,140 +140,16 @@ await pool.query(
     }
   });
 
-  // Example admin API: list products for a shop
- // Example admin API: list products for a shop
-router.get("/products", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+  // List products (REST)
+  router.get("/products", async (req, res) => {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
 
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
-
-    const accessToken = result.rows[0].access_token;
-
-const apiVersion = "2024-01";
-const url = `https://${shop}/admin/api/${apiVersion}/products.json?limit=10`;
-
-const resp = await fetch(url, {
-  method: "GET",
-  headers: {
-    "X-Shopify-Access-Token": accessToken,
-    "Content-Type": "application/json",
-  },
-});
-
-    const bodyText = await resp.text();
-
-    if (!resp.ok) {
-      console.error("Shopify products error:", resp.status, bodyText);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch products",
-        shopifyStatus: resp.status,
-        shopifyBody: bodyText,
-      });
-    }
-
-    const json = JSON.parse(bodyText);
-    return res.json({ success: true, products: json.products || [] });
-  } catch (err) {
-    console.error("List products failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch products" });
-  }
-});
-
-// Example admin API: list orders for a shop
-router.get("/orders", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
-
-    const accessToken = result.rows[0].access_token;
-
-const apiVersion = "2024-01"; // keep consistent with sales-summary
-
-const daysBack = Number(req.query.days_back || 30);
-const createdAtMin = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
-
-const fields =
-  "id,name,created_at,processed_at,total_price,subtotal_price,total_tax,total_discounts,currency,financial_status,fulfillment_status,line_items";
-
-const url =
-  `https://${shop}/admin/api/${apiVersion}/orders.json` +
-  `?status=any&limit=50&order=created_at%20desc` +
-  `&created_at_min=${encodeURIComponent(createdAtMin)}` +
-  `&fields=${encodeURIComponent(fields)}`;
-
-console.log("ORDERS URL:", url);
-
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    console.log("ORDERS STATUS:", resp.status);
-
-    const bodyText = await resp.text();
-
-    if (!resp.ok) {
-      console.error("Shopify orders error:", resp.status, bodyText);
-      console.log("ORDERS BODY (truncated):", bodyText ? bodyText.slice(0, 300) : "");
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch orders",
-        shopifyStatus: resp.status,
-        shopifyBody: bodyText,
-      });
-    }
-
-    const json = JSON.parse(bodyText);
-      return res.json({ success: true, orders: json.orders || [] });
-  } catch (err) {
-    console.error("List orders failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch orders" });
-  }
-});
-
-  // Sales summary for dashboard (read-only)
-  router.get("/sales-summary", async (req, res) => {
-  const shop = req.query.shop;
-  const locationId = req.query.location_id;
-
-  if (!shop)
-    return res.status(400).json({ success: false, message: "Missing shop param" });
-res.set("X-Aervo-Debug", "sales-summary-v1");
-
-
-  // prevent caching (keep these)
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.set("Pragma", "no-cache");
-  res.set("Expires", "0");
-  res.set("Surrogate-Control", "no-store");
-
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
 
       if (result.rows.length === 0) {
         return res.status(404).json({ success: false, message: "Shop not installed" });
@@ -280,35 +157,9 @@ res.set("X-Aervo-Debug", "sales-summary-v1");
 
       const accessToken = result.rows[0].access_token;
 
-   // Use the 2024-01 Admin API
-const apiVersion = "2024-01";
+      const apiVersion = "2024-01";
+      const url = `https://${shop}/admin/api/${apiVersion}/products.json?limit=10`;
 
-// Debug window: last X days (defaults to 30)
-// This avoids timezone "today" issues while you test.
-const daysBack = Number(req.query.days_back || 30);
-const createdAtMin = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
-
-const fields = [
-  "id",
-  "name",
-  "total_price",
-  "line_items",
-  "created_at",
-  "cancelled_at",
-  "financial_status",
-  "fulfillment_status",
-].join(",");
-
-const url =
-  `https://${shop}/admin/api/${apiVersion}/orders.json` +
-  `?status=any&limit=50&order=created_at%20desc` +
-  `&created_at_min=${encodeURIComponent(createdAtMin)}` +
-  `&fields=${encodeURIComponent(fields)}`;
-
-console.log("[sales-summary] shop =", shop);
-console.log("[sales-summary] createdAtMin =", createdAtMin);
-console.log("[sales-summary] url =", url);
-    
       const resp = await fetch(url, {
         method: "GET",
         headers: {
@@ -318,12 +169,195 @@ console.log("[sales-summary] url =", url);
       });
 
       const bodyText = await resp.text();
-      console.log("[sales-summary] shopify status =", resp.status);
-console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500));
 
       if (!resp.ok) {
-        console.error("Shopify sales-summary error:", resp.status, bodyText);
-        // Per requirement: return HTTP 200 with empty summary and log the error
+        console.error("Shopify products error:", resp.status, bodyText);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch products",
+          shopifyStatus: resp.status,
+          shopifyBody: bodyText,
+        });
+      }
+
+      const json = JSON.parse(bodyText);
+      return res.json({ success: true, products: json.products || [] });
+    } catch (err) {
+      console.error("List products failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to fetch products" });
+    }
+  });
+
+  // ✅ Orders (GraphQL) - keep separate, not inside sales-summary
+  router.get("/orders", async (req, res) => {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
+
+      const accessToken = result.rows[0].access_token;
+
+      const daysBack = Number(req.query.days_back || 30);
+      const createdAtMin = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+      const graphqlUrl = `https://${shop}/admin/api/2024-01/graphql.json`;
+
+      const query = `
+        query Orders($q: String!) {
+          orders(first: 50, query: $q, sortKey: CREATED_AT, reverse: true) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+                displayFinancialStatus
+                displayFulfillmentStatus
+                totalPriceSet { shopMoney { amount } }
+                lineItems(first: 50) {
+                  edges { node { title quantity } }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const variables = { q: `created_at:>=${createdAtMin}` };
+
+      console.log("[orders] shop =", shop);
+      console.log("[orders] createdAtMin =", createdAtMin);
+
+      const resp = await fetch(graphqlUrl, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+
+      const bodyText = await resp.text();
+      console.log("[orders] shopify status =", resp.status);
+      console.log("[orders] shopify body (first 500) =", bodyText.slice(0, 500));
+
+      if (!resp.ok) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch orders (GraphQL)",
+          shopifyStatus: resp.status,
+          shopifyBody: bodyText,
+        });
+      }
+
+      const parsed = JSON.parse(bodyText);
+
+      if (parsed.errors && parsed.errors.length) {
+        return res.status(500).json({
+          success: false,
+          message: "GraphQL returned errors",
+          shopifyErrors: parsed.errors,
+        });
+      }
+
+      const orders =
+        parsed?.data?.orders?.edges?.map((e) => {
+          const n = e.node;
+          return {
+            id: n.id,
+            name: n.name,
+            created_at: n.createdAt,
+            financial_status: n.displayFinancialStatus || null,
+            fulfillment_status: n.displayFulfillmentStatus || null,
+            total_price: n.totalPriceSet?.shopMoney?.amount || "0",
+            line_items: (n.lineItems?.edges || []).map((li) => ({
+              title: li.node?.title || "",
+              quantity: Number(li.node?.quantity || 0),
+            })),
+          };
+        }) || [];
+
+      return res.json({ success: true, orders });
+    } catch (err) {
+      console.error("List orders failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to fetch orders" });
+    }
+  });
+
+  // ✅ Sales summary (GraphQL)
+  router.get("/sales-summary", async (req, res) => {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+
+    res.set("X-Aervo-Debug", "sales-summary-v2-graphql");
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    res.set("Surrogate-Control", "no-store");
+
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
+
+      const accessToken = result.rows[0].access_token;
+
+      const daysBack = Number(req.query.days_back || 30);
+      const createdAtMin = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+      const graphqlUrl = `https://${shop}/admin/api/2024-01/graphql.json`;
+
+      const query = `
+        query Orders($q: String!) {
+          orders(first: 50, query: $q, sortKey: CREATED_AT, reverse: true) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+                displayFinancialStatus
+                displayFulfillmentStatus
+                totalPriceSet { shopMoney { amount } }
+                lineItems(first: 50) {
+                  edges { node { title quantity } }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const variables = { q: `created_at:>=${createdAtMin}` };
+
+      console.log("[sales-summary] shop =", shop);
+      console.log("[sales-summary] createdAtMin =", createdAtMin);
+
+      const resp = await fetch(graphqlUrl, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+
+      const bodyText = await resp.text();
+      console.log("[sales-summary] shopify status =", resp.status);
+      console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500));
+
+      if (!resp.ok) {
         return res.status(200).json({
           orders_count: 0,
           items_sold: 0,
@@ -333,11 +367,10 @@ console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500)
         });
       }
 
-      let json;
-      try {
-        json = JSON.parse(bodyText);
-      } catch (parseErr) {
-        console.error("Failed to parse Shopify orders response:", parseErr, bodyText.slice(0, 1000));
+      const parsed = JSON.parse(bodyText);
+
+      if (parsed.errors && parsed.errors.length) {
+        console.error("[sales-summary] graphql errors:", parsed.errors);
         return res.status(200).json({
           orders_count: 0,
           items_sold: 0,
@@ -347,50 +380,47 @@ console.log("[sales-summary] shopify body (first 500) =", bodyText.slice(0, 500)
         });
       }
 
-   const rawOrders = Array.isArray(json.orders) ? json.orders : [];
+      const rawOrders =
+        parsed?.data?.orders?.edges?.map((e) => {
+          const n = e.node;
+          return {
+            id: n.id,
+            name: n.name,
+            created_at: n.createdAt,
+            financial_status: n.displayFinancialStatus || null,
+            fulfillment_status: n.displayFulfillmentStatus || null,
+            total_price: n.totalPriceSet?.shopMoney?.amount || "0",
+            line_items: (n.lineItems?.edges || []).map((li) => ({
+              title: li.node?.title || "",
+              quantity: Number(li.node?.quantity || 0),
+            })),
+          };
+        }) || [];
 
-// TEMP: count all orders regardless of fulfillment/location
-const filteredOrders = rawOrders;
-
-      if (filteredOrders.length === 0) {
-        return res.json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
+      if (rawOrders.length === 0) {
+        return res.json({
+          orders_count: 0,
+          items_sold: 0,
+          gross_sales: 0,
+          top_product: null,
+          orders: [],
+        });
       }
 
       let itemsSold = 0;
       let grossSales = 0;
       const productCounts = Object.create(null);
 
-      const ordersOut = filteredOrders.map((o) => {
-        const orderLineItems = Array.isArray(o.line_items) ? o.line_items : [];
-
-        // sum per order
-        for (const li of orderLineItems) {
+      for (const o of rawOrders) {
+        for (const li of o.line_items) {
           const qty = Number(li.quantity || 0);
           itemsSold += qty;
           const title = li.title || "";
           productCounts[title] = (productCounts[title] || 0) + qty;
         }
+        grossSales += parseFloat(o.total_price || "0") || 0;
+      }
 
-        // total_price sometimes string; parse safely
-        const tp = parseFloat(o.total_price || "0") || 0;
-        grossSales += tp;
-
-
-      return {
-  id: o.id ? String(o.id) : null,
-  name: o.name || null,
-  total_price: o.total_price || "0",
-  created_at: o.created_at || null,
-  financial_status: o.financial_status || null,
-  fulfillment_status: o.fulfillment_status || null,
-  line_items: orderLineItems.map((li) => ({
-    title: li.title || "",
-    quantity: Number(li.quantity || 0),
-  })),
-};
-});
-
-      // determine top product
       let topProduct = null;
       let topQty = 0;
       for (const title of Object.keys(productCounts)) {
@@ -400,406 +430,389 @@ const filteredOrders = rawOrders;
         }
       }
 
-      // ensure numeric types
-      const summary = {
-        orders_count: ordersOut.length,
+      return res.json({
+        orders_count: rawOrders.length,
         items_sold: itemsSold,
-        gross_sales: Number(Number(grossSales).toFixed(2)),
-        top_product: topProduct || null,
-        orders: ordersOut,
-      };
-
-      return res.json(summary);
+        gross_sales: Number(grossSales.toFixed(2)),
+        top_product: topProduct,
+        orders: rawOrders,
+      });
     } catch (err) {
       console.error("Sales summary failed:", err);
-      // On any error, return 200 with empty summary per requirement
-      return res.status(200).json({ orders_count: 0, items_sold: 0, gross_sales: 0, top_product: null, orders: [] });
+      return res.status(200).json({
+        orders_count: 0,
+        items_sold: 0,
+        gross_sales: 0,
+        top_product: null,
+        orders: [],
+      });
     }
   });
 
-// Example admin API: list locations for a shop
-router.get("/locations", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+  // Example admin API: list locations for a shop
+  router.get("/locations", async (req, res) => {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
 
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
 
-    const accessToken = result.rows[0].access_token;
+      const accessToken = result.rows[0].access_token;
 
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-    const url = `https://${shop}/admin/api/${apiVersion}/locations.json`;
+      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+      const url = `https://${shop}/admin/api/${apiVersion}/locations.json`;
 
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const bodyText = await resp.text();
-
-    if (!resp.ok) {
-      console.error("Shopify locations error:", resp.status, bodyText);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch locations",
-        shopifyStatus: resp.status,
-        shopifyBody: bodyText,
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
       });
+
+      const bodyText = await resp.text();
+
+      if (!resp.ok) {
+        console.error("Shopify locations error:", resp.status, bodyText);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch locations",
+          shopifyStatus: resp.status,
+          shopifyBody: bodyText,
+        });
+      }
+
+      const json = JSON.parse(bodyText);
+      return res.json({ success: true, locations: json.locations || [] });
+    } catch (err) {
+      console.error("List locations failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to fetch locations" });
     }
+  });
 
-    const json = JSON.parse(bodyText);
-    return res.json({ success: true, locations: json.locations || [] });
-  } catch (err) {
-    console.error("List locations failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch locations" });
-  }
-});
+  // Example admin API: get inventory levels for a location (required)
+  router.get("/inventory-levels", async (req, res) => {
+    const shop = req.query.shop;
+    const locationId = req.query.location_id;
 
-// Example admin API: get inventory levels for a location (required)
-router.get("/inventory-levels", async (req, res) => {
-  const shop = req.query.shop;
-  const locationId = req.query.location_id;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+    if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
 
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
 
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
+      const accessToken = result.rows[0].access_token;
 
-    const accessToken = result.rows[0].access_token;
+      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+      const queryString = `?location_ids=${encodeURIComponent(locationId)}&limit=250`;
+      const url = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json${queryString}`;
 
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-    const queryString = `?location_ids=${encodeURIComponent(locationId)}&limit=250`;
-    const url = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json${queryString}`;
-
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const bodyText = await resp.text();
-
-    if (!resp.ok) {
-      console.error("Shopify inventory_levels error:", resp.status, bodyText);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch inventory levels",
-        shopifyStatus: resp.status,
-        shopifyBody: bodyText,
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
       });
+
+      const bodyText = await resp.text();
+
+      if (!resp.ok) {
+        console.error("Shopify inventory_levels error:", resp.status, bodyText);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch inventory levels",
+          shopifyStatus: resp.status,
+          shopifyBody: bodyText,
+        });
+      }
+
+      const json = JSON.parse(bodyText);
+      return res.json({ success: true, inventory_levels: json.inventory_levels || [] });
+    } catch (err) {
+      console.error("List inventory levels failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to fetch inventory levels" });
     }
+  });
 
-    const json = JSON.parse(bodyText);
-    return res.json({ success: true, inventory_levels: json.inventory_levels || [] });
-  } catch (err) {
-    console.error("List inventory levels failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch inventory levels" });
-  }
-});
+  // Inventory summary: map inventory_item_id -> product + variant titles for a location
+  router.get("/inventory-summary", async (req, res) => {
+    const shop = req.query.shop;
+    const locationId = req.query.location_id;
 
-// Inventory summary: map inventory_item_id -> product + variant titles for a location
-router.get("/inventory-summary", async (req, res) => {
-  const shop = req.query.shop;
-  const locationId = req.query.location_id;
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+    if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
 
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
 
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
+      const accessToken = result.rows[0].access_token;
+      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
 
-    const accessToken = result.rows[0].access_token;
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+      // 1) fetch inventory levels for the location
+      const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
+        locationId
+      )}&limit=250`;
 
-    // 1) fetch inventory levels for the location
-    const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
-      locationId
-    )}&limit=250`;
-
-    const invResp = await fetch(invUrl, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const invBody = await invResp.text();
-    if (!invResp.ok) {
-      console.error("Shopify inventory_levels error:", invResp.status, invBody);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch inventory levels",
-        shopifyStatus: invResp.status,
-        shopifyBody: invBody,
+      const invResp = await fetch(invUrl, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
       });
-    }
 
-    const invJson = JSON.parse(invBody);
-    const inventoryLevels = invJson.inventory_levels || [];
+      const invBody = await invResp.text();
+      if (!invResp.ok) {
+        console.error("Shopify inventory_levels error:", invResp.status, invBody);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch inventory levels",
+          shopifyStatus: invResp.status,
+          shopifyBody: invBody,
+        });
+      }
 
-    // If no inventory levels, return empty summary
-    if (inventoryLevels.length === 0) {
-      return res.json({ success: true, location_id: locationId, items: [] });
-    }
+      const invJson = JSON.parse(invBody);
+      const inventoryLevels = invJson.inventory_levels || [];
 
-    // collect unique inventory_item_ids
-    const inventoryItemIds = Array.from(
-      new Set(inventoryLevels.map((il) => String(il.inventory_item_id)).filter(Boolean))
-    );
+      if (inventoryLevels.length === 0) {
+        return res.json({ success: true, location_id: locationId, items: [] });
+      }
 
-    // 2) fetch products (with variants) to map inventory_item_id -> product + variant titles + sku
-    // Note: we fetch first page (limit=250) which matches existing pattern in this repo
-    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
-    const prodResp = await fetch(prodUrl, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const prodBody = await prodResp.text();
-    if (!prodResp.ok) {
-      console.error("Shopify products error:", prodResp.status, prodBody);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch products",
-        shopifyStatus: prodResp.status,
-        shopifyBody: prodBody,
+      // 2) fetch products to map inventory_item_id
+      const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
+      const prodResp = await fetch(prodUrl, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
       });
-    }
 
-    const prodJson = JSON.parse(prodBody);
-    const products = prodJson.products || [];
+      const prodBody = await prodResp.text();
+      if (!prodResp.ok) {
+        console.error("Shopify products error:", prodResp.status, prodBody);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch products",
+          shopifyStatus: prodResp.status,
+          shopifyBody: prodBody,
+        });
+      }
 
-    // build mapping inventory_item_id -> { product_title, variant_title, sku }
-    const mapping = {};
-    for (const p of products) {
-      const pTitle = p.title || "";
-      for (const v of p.variants || []) {
-        if (v && v.inventory_item_id) {
-          mapping[String(v.inventory_item_id)] = {
-            product_title: pTitle,
-            variant_title: v.title || "",
-            sku: v.sku || null,
-          };
+      const prodJson = JSON.parse(prodBody);
+      const products = prodJson.products || [];
+
+      const mapping = {};
+      for (const p of products) {
+        const pTitle = p.title || "";
+        for (const v of p.variants || []) {
+          if (v && v.inventory_item_id) {
+            mapping[String(v.inventory_item_id)] = {
+              product_title: pTitle,
+              variant_title: v.title || "",
+              sku: v.sku || null,
+            };
+          }
         }
       }
-    }
 
-    // assemble items: include null titles/skus when missing for debugging
-    const items = inventoryLevels.map((il) => {
-      const iid = String(il.inventory_item_id);
-      const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
-      return {
-        inventory_item_id: il.inventory_item_id,
-        available: il.available,
-        product_title: mapped.product_title,
-        variant_title: mapped.variant_title,
-        sku: mapped.sku,
-      };
-    });
-
-    return res.json({ success: true, location_id: locationId, items });
-  } catch (err) {
-    console.error("Inventory summary failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to build inventory summary" });
-  }
-});
-
-// Insights: reuse inventory-summary logic but compute metrics
-router.get("/insights", async (req, res) => {
-  const shop = req.query.shop;
-  const locationId = req.query.location_id;
-
-  if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
-  if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
-
-  try {
-    const result = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not installed" });
-    }
-
-    const accessToken = result.rows[0].access_token;
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-    // fetch inventory levels
-    const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
-      locationId
-    )}&limit=250`;
-
-    const invResp = await fetch(invUrl, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const invBody = await invResp.text();
-    if (!invResp.ok) {
-      console.error("Shopify inventory_levels error:", invResp.status, invBody);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch inventory levels",
-        shopifyStatus: invResp.status,
-        shopifyBody: invBody,
+      const items = inventoryLevels.map((il) => {
+        const iid = String(il.inventory_item_id);
+        const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
+        return {
+          inventory_item_id: il.inventory_item_id,
+          available: il.available,
+          product_title: mapped.product_title,
+          variant_title: mapped.variant_title,
+          sku: mapped.sku,
+        };
       });
+
+      return res.json({ success: true, location_id: locationId, items });
+    } catch (err) {
+      console.error("Inventory summary failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to build inventory summary" });
     }
+  });
 
-    const invJson = JSON.parse(invBody);
-    const inventoryLevels = invJson.inventory_levels || [];
+  // Insights: reuse inventory-summary logic but compute metrics
+  router.get("/insights", async (req, res) => {
+    const shop = req.query.shop;
+    const locationId = req.query.location_id;
 
-    // fetch products to build mapping
-    const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
-    const prodResp = await fetch(prodUrl, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    });
+    if (!shop) return res.status(400).json({ success: false, message: "Missing shop param" });
+    if (!locationId) return res.status(400).json({ success: false, message: "Missing location_id param" });
 
-    const prodBody = await prodResp.text();
-    if (!prodResp.ok) {
-      console.error("Shopify products error:", prodResp.status, prodBody);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch products",
-        shopifyStatus: prodResp.status,
-        shopifyBody: prodBody,
+    try {
+      const result = await pool.query(
+        "SELECT access_token FROM shops WHERE shop_origin = $1",
+        [shop]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Shop not installed" });
+      }
+
+      const accessToken = result.rows[0].access_token;
+      const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+      const invUrl = `https://${shop}/admin/api/${apiVersion}/inventory_levels.json?location_ids=${encodeURIComponent(
+        locationId
+      )}&limit=250`;
+
+      const invResp = await fetch(invUrl, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
       });
-    }
 
-    const prodJson = JSON.parse(prodBody);
-    const products = prodJson.products || [];
+      const invBody = await invResp.text();
+      if (!invResp.ok) {
+        console.error("Shopify inventory_levels error:", invResp.status, invBody);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch inventory levels",
+          shopifyStatus: invResp.status,
+          shopifyBody: invBody,
+        });
+      }
 
-    // build mapping inventory_item_id -> { product_title, variant_title, sku }
-    const mapping = {};
-    for (const p of products) {
-      const pTitle = p.title || null;
-      for (const v of p.variants || []) {
-        if (v && v.inventory_item_id) {
-          mapping[String(v.inventory_item_id)] = {
-            product_title: pTitle,
-            variant_title: v.title || null,
-            sku: v.sku || null,
-          };
+      const invJson = JSON.parse(invBody);
+      const inventoryLevels = invJson.inventory_levels || [];
+
+      const prodUrl = `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id,title,variants`;
+      const prodResp = await fetch(prodUrl, {
+        method: "GET",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const prodBody = await prodResp.text();
+      if (!prodResp.ok) {
+        console.error("Shopify products error:", prodResp.status, prodBody);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch products",
+          shopifyStatus: prodResp.status,
+          shopifyBody: prodBody,
+        });
+      }
+
+      const prodJson = JSON.parse(prodBody);
+      const products = prodJson.products || [];
+
+      const mapping = {};
+      for (const p of products) {
+        const pTitle = p.title || null;
+        for (const v of p.variants || []) {
+          if (v && v.inventory_item_id) {
+            mapping[String(v.inventory_item_id)] = {
+              product_title: pTitle,
+              variant_title: v.title || null,
+              sku: v.sku || null,
+            };
+          }
         }
       }
+
+      const items = inventoryLevels.map((il) => {
+        const iid = String(il.inventory_item_id);
+        const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
+        const available = il.available == null ? 0 : Number(il.available);
+        return {
+          inventory_item_id: il.inventory_item_id,
+          available,
+          product_title: mapped.product_title,
+          variant_title: mapped.variant_title,
+          sku: mapped.sku,
+        };
+      });
+
+      const thresholds = { low_stock: 10, overstock: 200 };
+      const total_items = items.length;
+      const total_units = items.reduce((sum, it) => sum + (typeof it.available === "number" ? it.available : Number(it.available || 0)), 0);
+      const missing_sku_count = items.filter((it) => !it.sku).length;
+      const missing_mapping_count = items.filter((it) => it.product_title == null).length;
+
+      const low_stock = items.filter((it) => it.available > 0 && it.available <= thresholds.low_stock);
+      const out_of_stock = items.filter((it) => it.available === 0);
+      const overstock = items.filter((it) => it.available >= thresholds.overstock);
+      const missing_sku = items.filter((it) => !it.sku);
+      const missing_mapping = items.filter((it) => it.product_title == null);
+
+      return res.json({
+        success: true,
+        location_id: locationId,
+        thresholds,
+        totals: {
+          total_items,
+          total_units,
+          missing_sku_count,
+          missing_mapping_count,
+        },
+        low_stock,
+        out_of_stock,
+        overstock,
+        missing_sku,
+        missing_mapping,
+      });
+    } catch (err) {
+      console.error("Insights failed:", err);
+      return res.status(500).json({ success: false, message: "Failed to build insights" });
     }
-
-    // assemble items
-    const items = inventoryLevels.map((il) => {
-      const iid = String(il.inventory_item_id);
-      const mapped = mapping[iid] || { product_title: null, variant_title: null, sku: null };
-      const available = il.available == null ? 0 : Number(il.available);
-      return {
-        inventory_item_id: il.inventory_item_id,
-        available,
-        product_title: mapped.product_title,
-        variant_title: mapped.variant_title,
-        sku: mapped.sku,
-      };
-    });
-
-    // compute metrics
-    const thresholds = { low_stock: 10, overstock: 200 };
-    const total_items = items.length;
-    const total_units = items.reduce((sum, it) => sum + (typeof it.available === "number" ? it.available : Number(it.available || 0)), 0);
-    const missing_sku_count = items.filter((it) => !it.sku).length;
-    const missing_mapping_count = items.filter((it) => it.product_title == null).length;
-
-    const low_stock = items.filter((it) => it.available > 0 && it.available <= thresholds.low_stock);
-    const out_of_stock = items.filter((it) => it.available === 0);
-    const overstock = items.filter((it) => it.available >= thresholds.overstock);
-    const missing_sku = items.filter((it) => !it.sku);
-    const missing_mapping = items.filter((it) => it.product_title == null);
-
-    return res.json({
-      success: true,
-      location_id: locationId,
-      thresholds,
-      totals: {
-        total_items,
-        total_units,
-        missing_sku_count,
-        missing_mapping_count,
-      },
-      low_stock,
-      out_of_stock,
-      overstock,
-      missing_sku,
-      missing_mapping,
-    });
-  } catch (err) {
-    console.error("Insights failed:", err);
-    return res.status(500).json({ success: false, message: "Failed to build insights" });
-  }
-});
+  });
 
   // Webhook endpoint with HMAC verification
-  router.post(
-    "/webhooks",
-    express.raw({ type: "application/json" }),
-    async (req, res) => {
-      const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
-      const body = req.body;
+  router.post("/webhooks", express.raw({ type: "application/json" }), async (req, res) => {
+    const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
+    const body = req.body;
 
-      const digest = crypto
-        .createHmac("sha256", process.env.SHOPIFY_API_SECRET || "")
-        .update(body)
-        .digest("base64");
+    const digest = crypto
+      .createHmac("sha256", process.env.SHOPIFY_API_SECRET || "")
+      .update(body)
+      .digest("base64");
 
-      if (!hmacHeader || digest !== hmacHeader) {
-        console.warn("Invalid webhook HMAC");
-        return res.status(401).send("Invalid HMAC");
-      }
-
-      try {
-        const json = JSON.parse(body.toString());
-        // TODO: handle webhook topics (orders/create, products/update, etc.)
-        console.log("Received webhook:", json);
-        return res.status(200).send("OK");
-      } catch (err) {
-        console.error("Webhook handling error:", err);
-        return res.status(500).send("Webhook processing failed");
-      }
+    if (!hmacHeader || digest !== hmacHeader) {
+      console.warn("Invalid webhook HMAC");
+      return res.status(401).send("Invalid HMAC");
     }
-  );
+
+    try {
+      const json = JSON.parse(body.toString());
+      console.log("Received webhook:", json);
+      return res.status(200).send("OK");
+    } catch (err) {
+      console.error("Webhook handling error:", err);
+      return res.status(500).send("Webhook processing failed");
+    }
+  });
 
   return router;
 };
