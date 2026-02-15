@@ -128,6 +128,73 @@ function listRoutes() {
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
+// ============= INSIGHTS (DASHBOARD DATA) =============
+app.get("/insights", async (req, res) => {
+  try {
+    const shop = String(req.query.shop || "").trim();
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Missing shop" });
+    }
+
+    // Get access token for this shop from DB
+    const dbRes = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+
+    if (dbRes.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Shop not found in database. Reinstall may be required.",
+      });
+    }
+
+    const accessToken = dbRes.rows[0].access_token;
+
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    // Basic checks: fetch shop + recent orders (edit endpoints to match your UI)
+    const [shopResp, ordersResp] = await Promise.all([
+      fetch(`${baseUrl}/shop.json`, {
+        headers: { "X-Shopify-Access-Token": accessToken },
+      }),
+      fetch(`${baseUrl}/orders.json?status=any&limit=10`, {
+        headers: { "X-Shopify-Access-Token": accessToken },
+      }),
+    ]);
+
+    if (!shopResp.ok) {
+      const txt = await shopResp.text();
+      return res.status(shopResp.status).json({
+        success: false,
+        message: "Shopify API shop.json failed",
+        details: txt,
+      });
+    }
+
+    if (!ordersResp.ok) {
+      const txt = await ordersResp.text();
+      return res.status(ordersResp.status).json({
+        success: false,
+        message: "Shopify API orders.json failed",
+        details: txt,
+      });
+    }
+
+    const shopJson = await shopResp.json();
+    const ordersJson = await ordersResp.json();
+
+    return res.json({
+      success: true,
+      shopName: shopJson.shop?.name || null,
+      recentOrders: ordersJson.orders || [],
+    });
+  } catch (err) {
+    console.error("Insights error:", err);
+    return res.status(500).json({ success: false, message: "Insights failed" });
+  }
+});
 
 // ============= TEST EMAIL =============
 app.get("/api/test-email", async (req, res) => {
