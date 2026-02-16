@@ -600,6 +600,391 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
     });
   }
 });
+// Add these endpoints to your index.js file (after the existing endpoints, before the server starts)
+
+// ============= SHOPIFY DATA ENDPOINTS =============
+
+// Helper function to get shop access token
+async function getShopToken(shop) {
+  const result = await pool.query(
+    "SELECT access_token FROM shops WHERE shop_origin = $1",
+    [shop]
+  );
+  
+  if (result.rows.length === 0) {
+    throw new Error("Shop not found");
+  }
+  
+  return result.rows[0].access_token;
+}
+
+// GET DASHBOARD OVERVIEW DATA
+app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop parameter required" });
+    }
+
+    const accessToken = await getShopToken(shop);
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    // Fetch multiple data points in parallel
+    const [ordersResp, productsResp, customersResp, inventoryResp] = await Promise.all([
+      fetch(`${baseUrl}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(30)}`, {
+        headers: { "X-Shopify-Access-Token": accessToken }
+      }),
+      fetch(`${baseUrl}/products.json?limit=250`, {
+        headers: { "X-Shopify-Access-Token": accessToken }
+      }),
+      fetch(`${baseUrl}/customers.json?limit=250`, {
+        headers: { "X-Shopify-Access-Token": accessToken }
+      }),
+      fetch(`${baseUrl}/inventory_levels.json?limit=250`, {
+        headers: { "X-Shopify-Access-Token": accessToken }
+      })
+    ]);
+
+    const orders = await ordersResp.json();
+    const products = await productsResp.json();
+    const customers = await customersResp.json();
+    const inventory = await inventoryResp.json();
+
+    // Calculate metrics
+    const ordersList = orders.orders || [];
+    const productsList = products.products || [];
+    const customersList = customers.customers || [];
+
+    // Revenue calculations
+    const totalRevenue = ordersList.reduce((sum, order) => 
+      sum + parseFloat(order.total_price || 0), 0
+    );
+
+    const todayOrders = ordersList.filter(order => 
+      isToday(new Date(order.created_at))
+    );
+
+    const yesterdayOrders = ordersList.filter(order => 
+      isYesterday(new Date(order.created_at))
+    );
+
+    const lastMonthOrders = ordersList.filter(order => 
+      isLastMonth(new Date(order.created_at))
+    );
+
+    const lastMonthRevenue = lastMonthOrders.reduce((sum, order) => 
+      sum + parseFloat(order.total_price || 0), 0
+    );
+
+    const revenueChange = lastMonthRevenue > 0 
+      ? ((totalRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1)
+      : 0;
+
+    // Inventory analysis
+    const allVariants = productsList.flatMap(p => p.variants || []);
+    const outOfStock = allVariants.filter(v => 
+      (v.inventory_quantity || 0) === 0
+    );
+    const lowStock = allVariants.filter(v => 
+      (v.inventory_quantity || 0) > 0 && (v.inventory_quantity || 0) <= 10
+    );
+
+    // Conversion rate (simplified - using orders vs visitors approximation)
+    const conversionRate = ((ordersList.length / (ordersList.length * 25)) * 100).toFixed(1);
+
+    return res.json({
+      success: true,
+      data: {
+        revenue: {
+          total: totalRevenue.toFixed(2),
+          change: revenueChange,
+          lastMonth: lastMonthRevenue.toFixed(2)
+        },
+        orders: {
+          today: todayOrders.length,
+          yesterday: yesterdayOrders.length,
+          total: ordersList.length,
+          change: yesterdayOrders.length > 0 
+            ? (((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length) * 100).toFixed(1)
+            : 0
+        },
+        inventory: {
+          totalProducts: productsList.length,
+          totalVariants: allVariants.length,
+          outOfStock: outOfStock.length,
+          lowStock: lowStock.length
+        },
+        conversion: {
+          rate: conversionRate
+        }
+      }
+    });
+  } catch (err) {
+    console.error("Overview error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch overview data",
+      error: err.message 
+    });
+  }
+});
+
+// GET RECENT ORDERS
+app.get("/api/shopify/orders", authenticateToken, async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    const limit = req.query.limit || 50;
+    
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop parameter required" });
+    }
+
+    const accessToken = await getShopToken(shop);
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    const response = await fetch(
+      `${baseUrl}/orders.json?status=any&limit=${limit}&order=created_at DESC`,
+      { headers: { "X-Shopify-Access-Token": accessToken } }
+    );
+
+    const data = await response.json();
+
+    return res.json({
+      success: true,
+      orders: data.orders || []
+    });
+  } catch (err) {
+    console.error("Orders error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders" 
+    });
+  }
+});
+
+// GET INVENTORY DATA
+app.get("/api/shopify/inventory", authenticateToken, async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop parameter required" });
+    }
+
+    const accessToken = await getShopToken(shop);
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    const response = await fetch(`${baseUrl}/products.json?limit=250`, {
+      headers: { "X-Shopify-Access-Token": accessToken }
+    });
+
+    const data = await response.json();
+    const products = data.products || [];
+
+    // Analyze inventory
+    const inventoryItems = [];
+    products.forEach(product => {
+      (product.variants || []).forEach(variant => {
+        const quantity = variant.inventory_quantity || 0;
+        inventoryItems.push({
+          productId: product.id,
+          productTitle: product.title,
+          variantId: variant.id,
+          variantTitle: variant.title,
+          sku: variant.sku,
+          quantity: quantity,
+          price: variant.price,
+          status: quantity === 0 ? 'out_of_stock' : quantity <= 10 ? 'low_stock' : 'in_stock'
+        });
+      });
+    });
+
+    // Sort by priority (out of stock first, then low stock)
+    inventoryItems.sort((a, b) => {
+      if (a.status === 'out_of_stock' && b.status !== 'out_of_stock') return -1;
+      if (a.status !== 'out_of_stock' && b.status === 'out_of_stock') return 1;
+      if (a.status === 'low_stock' && b.status !== 'low_stock') return -1;
+      if (a.status !== 'low_stock' && b.status === 'low_stock') return 1;
+      return a.quantity - b.quantity;
+    });
+
+    const outOfStock = inventoryItems.filter(i => i.status === 'out_of_stock');
+    const lowStock = inventoryItems.filter(i => i.status === 'low_stock');
+
+    return res.json({
+      success: true,
+      inventory: {
+        items: inventoryItems,
+        outOfStock: outOfStock,
+        lowStock: lowStock,
+        totalProducts: products.length,
+        totalVariants: inventoryItems.length
+      }
+    });
+  } catch (err) {
+    console.error("Inventory error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch inventory" 
+    });
+  }
+});
+
+// GET CUSTOMER DATA
+app.get("/api/shopify/customers", authenticateToken, async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop parameter required" });
+    }
+
+    const accessToken = await getShopToken(shop);
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    const response = await fetch(`${baseUrl}/customers.json?limit=250`, {
+      headers: { "X-Shopify-Access-Token": accessToken }
+    });
+
+    const data = await response.json();
+    const customers = data.customers || [];
+
+    // Calculate customer metrics
+    const repeatCustomers = customers.filter(c => 
+      (c.orders_count || 0) > 1
+    );
+
+    const totalSpent = customers.reduce((sum, c) => 
+      sum + parseFloat(c.total_spent || 0), 0
+    );
+
+    const avgLifetimeValue = customers.length > 0 
+      ? (totalSpent / customers.length).toFixed(2)
+      : 0;
+
+    // Sort by total spent
+    const topCustomers = [...customers]
+      .sort((a, b) => parseFloat(b.total_spent || 0) - parseFloat(a.total_spent || 0))
+      .slice(0, 10);
+
+    return res.json({
+      success: true,
+      customers: {
+        total: customers.length,
+        repeatCustomers: repeatCustomers.length,
+        repeatRate: customers.length > 0 
+          ? ((repeatCustomers.length / customers.length) * 100).toFixed(1)
+          : 0,
+        avgLifetimeValue: avgLifetimeValue,
+        topCustomers: topCustomers.map(c => ({
+          id: c.id,
+          name: `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Guest',
+          email: c.email,
+          ordersCount: c.orders_count || 0,
+          totalSpent: parseFloat(c.total_spent || 0).toFixed(2),
+          lastOrderDate: c.last_order_name
+        }))
+      }
+    });
+  } catch (err) {
+    console.error("Customers error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch customers" 
+    });
+  }
+});
+
+// GET SALES ANALYTICS (for charts)
+app.get("/api/shopify/analytics", authenticateToken, async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    const days = parseInt(req.query.days) || 7;
+    
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop parameter required" });
+    }
+
+    const accessToken = await getShopToken(shop);
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
+
+    const response = await fetch(
+      `${baseUrl}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(days)}`,
+      { headers: { "X-Shopify-Access-Token": accessToken } }
+    );
+
+    const data = await response.json();
+    const orders = data.orders || [];
+
+    // Group by day
+    const dailyData = {};
+    for (let i = 0; i < days; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateKey = date.toISOString().split('T')[0];
+      dailyData[dateKey] = { revenue: 0, orders: 0, date: dateKey };
+    }
+
+    orders.forEach(order => {
+      const dateKey = order.created_at.split('T')[0];
+      if (dailyData[dateKey]) {
+        dailyData[dateKey].revenue += parseFloat(order.total_price || 0);
+        dailyData[dateKey].orders += 1;
+      }
+    });
+
+    const chartData = Object.values(dailyData)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map(d => ({
+        date: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        revenue: parseFloat(d.revenue.toFixed(2)),
+        orders: d.orders
+      }));
+
+    return res.json({
+      success: true,
+      analytics: chartData
+    });
+  } catch (err) {
+    console.error("Analytics error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch analytics" 
+    });
+  }
+});
+
+// ============= HELPER FUNCTIONS =============
+
+function getDateDaysAgo(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+}
+
+function isToday(date) {
+  const today = new Date();
+  return date.toDateString() === today.toDateString();
+}
+
+function isYesterday(date) {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return date.toDateString() === yesterday.toDateString();
+}
+
+function isLastMonth(date) {
+  const today = new Date();
+  const lastMonth = new Date();
+  lastMonth.setMonth(lastMonth.getMonth() - 1);
+  return date >= lastMonth && date < today;
+}
 
 // ============= START SERVER =============
 const PORT = process.env.PORT || 10000;
