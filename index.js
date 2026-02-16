@@ -49,7 +49,7 @@ const authLimiter = rateLimit({
       success: false,
       code: "RATE_LIMITED",
       message: "Aervo Shield is on. Too many attempts from this device.",
-      hint: "Wait a minute and try again. If you're stuck, use “Forgot password.”",
+      hint: "Wait a minute and try again. If you're stuck, use "Forgot password."",
       retryAfterSeconds,
     });
   },
@@ -64,6 +64,30 @@ const pool = new Pool({
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
+
+// ============= JWT MIDDLEWARE =============
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required",
+    });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid or expired token",
+      });
+    }
+    req.user = user;
+    next();
+  });
+}
 
 // Ensure shops table exists and mount Shopify routes
 // Ensure Shopify tables exist, then mount Shopify routes
@@ -97,37 +121,60 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 const shopifyRouter = require("./routes/shopify")(pool);
 app.use("/auth/shopify", shopifyRouter);
 
-// Quick route-list logger to show registered routes at boot
-function listRoutes() {
-  const routes = [];
-  if (!app || !app._router) return console.log("No routes to list");
-  app._router.stack.forEach((middleware) => {
-    if (middleware.route) {
-      // routes registered directly on the app
-      const methods = Object.keys(middleware.route.methods)
-        .map((m) => m.toUpperCase())
-        .join(",");
-      routes.push(`${methods} ${middleware.route.path}`);
-    } else if (middleware.name === "router" && middleware.handle && middleware.handle.stack) {
-      // router middleware
-      middleware.handle.stack.forEach((handler) => {
-        if (handler.route) {
-          const methods = Object.keys(handler.route.methods)
-            .map((m) => m.toUpperCase())
-            .join(",");
-          // If a router is mounted, middleware.regexp may have the mount path but it's hard to extract reliably here — show the route path.
-          routes.push(`${methods} ${handler.route.path}`);
-        }
-      });
-    }
-  });
-  console.log("Registered routes:");
-  routes.forEach((r) => console.log(" -", r));
-}
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
+
+// ============= GET CURRENT USER =============
+app.get("/api/user/me", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, email, company_name, role, email_verified, created_at, last_login
+       FROM users
+       WHERE id = $1`,
+      [req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Check if user has a connected Shopify shop
+    const shopResult = await pool.query(
+      `SELECT shop_origin, installed_at FROM shops LIMIT 1`
+    );
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        companyName: user.company_name,
+        role: user.role,
+        emailVerified: user.email_verified,
+        createdAt: user.created_at,
+        lastLogin: user.last_login,
+      },
+      shop: shopResult.rows.length > 0 ? {
+        shopOrigin: shopResult.rows[0].shop_origin,
+        installedAt: shopResult.rows[0].installed_at,
+      } : null,
+    });
+  } catch (err) {
+    console.error("Get user error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user data",
+    });
+  }
+});
+
 // ============= INSIGHTS (DASHBOARD DATA) =============
 app.get("/insights", async (req, res) => {
   try {
@@ -280,7 +327,7 @@ app.post("/api/signup", authLimiter, async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // ✅ Send verify email (don’t block signup response)
+    // ✅ Send verify email (don't block signup response)
     sendVerifyEmail({
       toEmail: normalizedEmail,
       token: verifyToken,

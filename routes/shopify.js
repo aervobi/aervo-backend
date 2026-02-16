@@ -135,8 +135,8 @@ module.exports = function (pool) {
         [shop, accessToken, scope]
       );
 
-      const appUrl = buildAppUrl() || "/";
-      return res.redirect(`${appUrl}?shop_installed=${encodeURIComponent(shop)}`);
+      const frontendUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+return res.redirect(`${frontendUrl}/dashboard.html?shop=${encodeURIComponent(shop)}&connected=1`);
     } catch (err) {
       console.error("Shopify callback error:", err);
       return res.status(500).send(`OAuth callback failed: ${err.message}`);
