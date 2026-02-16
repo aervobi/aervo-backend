@@ -49,7 +49,7 @@ const authLimiter = rateLimit({
       success: false,
       code: "RATE_LIMITED",
       message: "Aervo Shield is on. Too many attempts from this device.",
-      hint: "Wait a minute and try again. If you're stuck, use "Forgot password."",
+      hint: "Wait a minute and try again. If you're stuck, use 'Forgot password.'",
       retryAfterSeconds,
     });
   },
@@ -89,7 +89,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Ensure shops table exists and mount Shopify routes
 // Ensure Shopify tables exist, then mount Shopify routes
 (async () => {
   try {
