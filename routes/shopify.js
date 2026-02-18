@@ -64,118 +64,146 @@ function getUserIdFromToken(req) {
   });
 
   router.get("/callback", async (req, res) => {
-    try {
-      const { shop, code, state, hmac } = req.query;
+  try {
+    console.log("🔍 OAuth callback started");
+    const { shop, code, state, hmac } = req.query;
+    console.log("Shop:", shop, "State:", state);
 
-      if (!shop || !code || !state || !hmac) {
-        return res.status(400).send("Missing required OAuth parameters.");
-      }
-
-      // Verify HMAC
-      const queryParams = Object.entries(req.query)
-        .filter(([key]) => key !== "hmac")
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join("&");
-
-      const expectedHmac = crypto
-        .createHmac("sha256", SHOPIFY_API_SECRET)
-        .update(queryParams)
-        .digest("hex");
-
-      if (expectedHmac !== hmac) {
-        return res.status(401).send("Invalid HMAC.");
-      }
-
-      // Verify state
-      const stateResult = await pool.query(
-        `SELECT user_id FROM shopify_oauth_states
-         WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
-        [shop, state]
-      );
-
-      if (stateResult.rows.length === 0) {
-        return res.status(400).send("Invalid or expired OAuth state.");
-      }
-
-      const userId = stateResult.rows[0].user_id;
-
-      await pool.query(
-        `DELETE FROM shopify_oauth_states WHERE shop_origin = $1 AND state = $2`,
-        [shop, state]
-      );
-
-      // Exchange code for access token
-      const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id:     SHOPIFY_API_KEY,
-          client_secret: SHOPIFY_API_SECRET,
-          code,
-        }),
-      });
-
-      if (!tokenResponse.ok) {
-        return res.status(500).send("Failed to exchange OAuth code.");
-      }
-
-      const tokenData = await tokenResponse.json();
-      const { access_token, scope } = tokenData;
-
-      // Save to OLD shops table for backwards compatibility
-      await pool.query(
-        `INSERT INTO shops (shop_origin, access_token, scope, user_id, store_name, installed_at)
-         VALUES ($1, $2, $3, $4, $1, NOW())
-         ON CONFLICT (shop_origin)
-         DO UPDATE SET
-           access_token = EXCLUDED.access_token,
-           scope        = EXCLUDED.scope,
-           user_id      = EXCLUDED.user_id,
-           installed_at = NOW()`,
-        [shop, access_token, scope, userId]
-      );
-
-// Save to NEW connected_stores table (multi-store support)
-await pool.query(
-  `INSERT INTO connected_stores (
-     user_id, integration_name, store_id, store_name, 
-     store_origin, access_token, is_active, connected_at
-   )
-   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-   ON CONFLICT (user_id, integration_name, store_id)
-   DO UPDATE SET
-     access_token = EXCLUDED.access_token,
-     is_active    = EXCLUDED.is_active,
-     updated_at   = NOW()`,
-  [
-    userId,                    // $1
-    'shopify',                 // $2
-    String(shop),              // $3 - explicitly convert to string
-    String(shop),              // $4 - explicitly convert to string
-    String(shop),              // $5 - explicitly convert to string
-    String(access_token),      // $6 - explicitly convert to string
-    true                       // $7
-  ]
-);
-
-      // Mark all other stores for this user as inactive (only one active at a time)
-      await pool.query(
-        `UPDATE connected_stores 
-         SET is_active = false 
-         WHERE user_id = $1 AND store_id != $2`,
-        [userId, shop]
-      );
-
-      console.log(`✅ Shop ${shop} connected to user ${userId}`);
-
-      return res.redirect(`${FRONTEND_URL}/integrations.html?connected=1`);
-
-    } catch (err) {
-      console.error("OAuth callback error:", err);
-      return res.status(500).send("OAuth callback failed.");
+    if (!shop || !code || !state || !hmac) {
+      console.log("❌ Missing OAuth params");
+      return res.status(400).send("Missing required OAuth parameters.");
     }
-  });
 
+    // Verify HMAC
+    console.log("Verifying HMAC...");
+    const queryParams = Object.entries(req.query)
+      .filter(([key]) => key !== "hmac")
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("&");
+
+    const expectedHmac = crypto
+      .createHmac("sha256", SHOPIFY_API_SECRET)
+      .update(queryParams)
+      .digest("hex");
+
+    if (expectedHmac !== hmac) {
+      console.log("❌ Invalid HMAC");
+      return res.status(401).send("Invalid HMAC.");
+    }
+    console.log("✅ HMAC verified");
+
+    // Verify state
+    console.log("Verifying state...");
+    const stateResult = await pool.query(
+      `SELECT user_id FROM shopify_oauth_states
+       WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
+      [shop, state]
+    );
+
+    console.log("State result rows:", stateResult.rows.length);
+
+    if (stateResult.rows.length === 0) {
+      console.log("❌ Invalid or expired state");
+      return res.status(400).send("Invalid or expired OAuth state.");
+    }
+
+    const userId = stateResult.rows[0].user_id;
+    console.log("✅ UserId from state:", userId);
+
+    await pool.query(
+      `DELETE FROM shopify_oauth_states WHERE shop_origin = $1 AND state = $2`,
+      [shop, state]
+    );
+    console.log("✅ State deleted");
+
+    // Exchange code for access token
+    console.log("Exchanging code for token...");
+    const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id:     SHOPIFY_API_KEY,
+        client_secret: SHOPIFY_API_SECRET,
+        code,
+      }),
+    });
+
+    console.log("Token response status:", tokenResponse.status);
+
+    if (!tokenResponse.ok) {
+      console.log("❌ Failed to exchange code");
+      return res.status(500).send("Failed to exchange OAuth code.");
+    }
+
+    const tokenData = await tokenResponse.json();
+    const { access_token, scope } = tokenData;
+    console.log("✅ Got access token");
+
+    // Save to OLD shops table for backwards compatibility
+    console.log("💾 Saving to shops table...");
+    await pool.query(
+      `INSERT INTO shops (shop_origin, access_token, scope, user_id, store_name, installed_at)
+       VALUES ($1, $2, $3, $4, $1, NOW())
+       ON CONFLICT (shop_origin)
+       DO UPDATE SET
+         access_token = EXCLUDED.access_token,
+         scope        = EXCLUDED.scope,
+         user_id      = EXCLUDED.user_id,
+         installed_at = NOW()`,
+      [shop, access_token, scope, userId]
+    );
+    console.log("✅ Saved to shops");
+
+    // Save to NEW connected_stores table (multi-store support)
+    console.log("💾 Saving to connected_stores...");
+    console.log("Parameters:", {
+      userId,
+      shopString: String(shop),
+      tokenLength: String(access_token).length
+    });
+    
+    await pool.query(
+      `INSERT INTO connected_stores (
+         user_id, integration_name, store_id, store_name, 
+         store_origin, access_token, is_active, connected_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+       ON CONFLICT (user_id, integration_name, store_id)
+       DO UPDATE SET
+         access_token = EXCLUDED.access_token,
+         is_active    = EXCLUDED.is_active,
+         updated_at   = NOW()`,
+      [
+        userId,                    // $1
+        'shopify',                 // $2
+        String(shop),              // $3
+        String(shop),              // $4
+        String(shop),              // $5
+        String(access_token),      // $6
+        true                       // $7
+      ]
+    );
+    console.log("✅ Saved to connected_stores");
+
+    // Mark all other stores for this user as inactive
+    console.log("Setting other stores inactive...");
+    await pool.query(
+      `UPDATE connected_stores 
+       SET is_active = false 
+       WHERE user_id = $1 AND store_id != $2`,
+      [userId, shop]
+    );
+    console.log("✅ Other stores set to inactive");
+
+    console.log(`✅ Shop ${shop} connected to user ${userId}`);
+
+    return res.redirect(`${FRONTEND_URL}/integrations.html?connected=1`);
+
+  } catch (err) {
+    console.error("❌ OAuth callback error:", err);
+    return res.status(500).send("OAuth callback failed.");
+  }
+});
   return router;
 };
