@@ -1323,6 +1323,389 @@ app.put("/api/alerts/preferences", authenticateToken, async (req, res) => {
   }
 });
 
+// ============================================================
+// AUTOMATED ALERTS SYSTEM - Backend
+// Add to your index.js file
+// ============================================================
+
+// ============= ALERT DETECTION FUNCTIONS =============
+
+async function detectAlerts(storeId, userId) {
+  try {
+    const alerts = [];
+    
+    // Get user's alert preferences
+    const prefsResult = await pool.query(
+      `SELECT * FROM alert_preferences WHERE user_id = $1`,
+      [userId]
+    );
+    
+    if (prefsResult.rows.length === 0) return alerts;
+    const prefs = prefsResult.rows[0];
+    
+    // Get store info
+    const storeResult = await pool.query(
+      `SELECT store_origin, access_token FROM connected_stores WHERE id = $1`,
+      [storeId]
+    );
+    
+    if (storeResult.rows.length === 0) return alerts;
+    const store = storeResult.rows[0];
+    
+    // Fetch today's Shopify data
+    const todayData = await fetchShopifyDailyData(store.store_origin, store.access_token);
+    
+    // Get yesterday's snapshot for comparison
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    const snapshotResult = await pool.query(
+      `SELECT * FROM daily_stats_snapshots WHERE store_id = $1 AND snapshot_date = $2`,
+      [storeId, yesterdayStr]
+    );
+    
+    const yesterdayData = snapshotResult.rows[0] || null;
+    
+    // === REVENUE ALERTS ===
+    if (prefs.revenue_alerts && yesterdayData) {
+      const revenueChange = yesterdayData.revenue > 0 
+        ? ((todayData.revenue - parseFloat(yesterdayData.revenue)) / parseFloat(yesterdayData.revenue)) * 100
+        : 0;
+      
+      if (revenueChange >= prefs.revenue_spike_threshold) {
+        alerts.push({
+          type: 'revenue_spike',
+          severity: 'info',
+          title: `📈 Revenue Up ${revenueChange.toFixed(1)}%`,
+          message: `Great news! Your revenue is $${todayData.revenue.toFixed(2)} today, up ${revenueChange.toFixed(1)}% from yesterday's $${parseFloat(yesterdayData.revenue).toFixed(2)}`,
+          data: { todayRevenue: todayData.revenue, yesterdayRevenue: yesterdayData.revenue, change: revenueChange }
+        });
+      } else if (revenueChange <= -prefs.revenue_drop_threshold) {
+        alerts.push({
+          type: 'revenue_drop',
+          severity: 'warning',
+          title: `📉 Revenue Down ${Math.abs(revenueChange).toFixed(1)}%`,
+          message: `Your revenue is $${todayData.revenue.toFixed(2)} today, down ${Math.abs(revenueChange).toFixed(1)}% from yesterday's $${parseFloat(yesterdayData.revenue).toFixed(2)}. Consider running a promotion.`,
+          data: { todayRevenue: todayData.revenue, yesterdayRevenue: yesterdayData.revenue, change: revenueChange }
+        });
+      }
+    }
+    
+    // === INVENTORY ALERTS ===
+    if (prefs.inventory_alerts) {
+      if (todayData.outOfStockCount > 0) {
+        alerts.push({
+          type: 'out_of_stock',
+          severity: 'critical',
+          title: `⚠️ ${todayData.outOfStockCount} Products Out of Stock`,
+          message: `You have ${todayData.outOfStockCount} products completely out of stock. This could be costing you sales!`,
+          data: { count: todayData.outOfStockCount }
+        });
+      }
+      
+      if (todayData.lowStockCount >= 5) {
+        alerts.push({
+          type: 'low_stock',
+          severity: 'warning',
+          title: `💰 ${todayData.lowStockCount} Products Running Low`,
+          message: `${todayData.lowStockCount} products have ${prefs.low_stock_threshold} or fewer units in stock. Time to reorder.`,
+          data: { count: todayData.lowStockCount, threshold: prefs.low_stock_threshold }
+        });
+      }
+    }
+    
+    // === HIGH VALUE ORDER ALERT ===
+    if (prefs.order_alerts && todayData.highValueOrders > 0) {
+      alerts.push({
+        type: 'high_value_order',
+        severity: 'info',
+        title: `🎉 ${todayData.highValueOrders} High-Value Orders`,
+        message: `You received ${todayData.highValueOrders} orders over $${prefs.high_value_order_amount} today!`,
+        data: { count: todayData.highValueOrders, threshold: prefs.high_value_order_amount }
+      });
+    }
+    
+    // === CUSTOMER ALERTS ===
+    if (prefs.customer_alerts && yesterdayData) {
+      const newCustomersChange = yesterdayData.new_customers > 0
+        ? ((todayData.newCustomers - yesterdayData.new_customers) / yesterdayData.new_customers) * 100
+        : 0;
+      
+      if (newCustomersChange >= 50 && todayData.newCustomers >= 5) {
+        alerts.push({
+          type: 'new_customers_spike',
+          severity: 'info',
+          title: `👥 ${todayData.newCustomers} New Customers Today`,
+          message: `You gained ${todayData.newCustomers} new customers today, up ${newCustomersChange.toFixed(0)}% from yesterday!`,
+          data: { count: todayData.newCustomers, change: newCustomersChange }
+        });
+      }
+    }
+    
+    return alerts;
+    
+  } catch (err) {
+    console.error("Alert detection error:", err);
+    return [];
+  }
+}
+
+async function fetchShopifyDailyData(shopOrigin, accessToken) {
+  const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+  const baseUrl = `https://${shopOrigin}/admin/api/${apiVersion}`;
+  const headers = { "X-Shopify-Access-Token": accessToken };
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayISO = today.toISOString();
+  
+  // Fetch today's orders
+  const ordersRes = await fetch(
+    `${baseUrl}/orders.json?status=any&limit=250&created_at_min=${todayISO}`,
+    { headers }
+  );
+  const orders = (await ordersRes.json()).orders || [];
+  
+  // Fetch products for inventory check
+  const productsRes = await fetch(`${baseUrl}/products.json?limit=250`, { headers });
+  const products = (await productsRes.json()).products || [];
+  
+  // Calculate metrics
+  const revenue = orders.reduce((sum, o) => sum + parseFloat(o.total_price || 0), 0);
+  const ordersCount = orders.length;
+  const avgOrderValue = ordersCount > 0 ? revenue / ordersCount : 0;
+  
+  const newCustomers = orders.filter(o => o.customer && o.customer.orders_count === 1).length;
+  const returningCustomers = orders.filter(o => o.customer && o.customer.orders_count > 1).length;
+  
+  const highValueOrders = orders.filter(o => parseFloat(o.total_price || 0) >= 500).length;
+  
+  // Inventory analysis
+  const allVariants = products.flatMap(p => p.variants || []);
+  const outOfStockCount = allVariants.filter(v => (v.inventory_quantity || 0) === 0).length;
+  const lowStockCount = allVariants.filter(v => {
+    const qty = v.inventory_quantity || 0;
+    return qty > 0 && qty <= 10;
+  }).length;
+  
+  // Top product
+  const productSales = {};
+  orders.forEach(order => {
+    (order.line_items || []).forEach(item => {
+      if (!productSales[item.product_id]) {
+        productSales[item.product_id] = { name: item.title, revenue: 0 };
+      }
+      productSales[item.product_id].revenue += parseFloat(item.price) * item.quantity;
+    });
+  });
+  
+  const topProduct = Object.entries(productSales)
+    .sort((a, b) => b[1].revenue - a[1].revenue)[0];
+  
+  return {
+    revenue,
+    ordersCount,
+    avgOrderValue,
+    newCustomers,
+    returningCustomers,
+    highValueOrders,
+    outOfStockCount,
+    lowStockCount,
+    topProductId: topProduct ? topProduct[0] : null,
+    topProductName: topProduct ? topProduct[1].name : null,
+    topProductRevenue: topProduct ? topProduct[1].revenue : 0
+  };
+}
+
+// ============= SAVE DAILY SNAPSHOT =============
+async function saveDailySnapshot(storeId, data) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  await pool.query(
+    `INSERT INTO daily_stats_snapshots (
+      store_id, snapshot_date, revenue, orders_count, avg_order_value,
+      new_customers, returning_customers, top_product_id, top_product_name,
+      top_product_revenue, out_of_stock_count, low_stock_count
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (store_id, snapshot_date)
+    DO UPDATE SET
+      revenue = EXCLUDED.revenue,
+      orders_count = EXCLUDED.orders_count,
+      avg_order_value = EXCLUDED.avg_order_value,
+      new_customers = EXCLUDED.new_customers,
+      returning_customers = EXCLUDED.returning_customers,
+      top_product_id = EXCLUDED.top_product_id,
+      top_product_name = EXCLUDED.top_product_name,
+      top_product_revenue = EXCLUDED.top_product_revenue,
+      out_of_stock_count = EXCLUDED.out_of_stock_count,
+      low_stock_count = EXCLUDED.low_stock_count`,
+    [
+      storeId, today, data.revenue, data.ordersCount, data.avgOrderValue,
+      data.newCustomers, data.returningCustomers, data.topProductId,
+      data.topProductName, data.topProductRevenue, data.outOfStockCount, data.lowStockCount
+    ]
+  );
+}
+
+// ============= LOG ALERT =============
+async function logAlert(userId, storeId, alert) {
+  await pool.query(
+    `INSERT INTO alerts_log (user_id, store_id, alert_type, severity, title, message, data, channel)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [userId, storeId, alert.type, alert.severity, alert.title, alert.message, JSON.stringify(alert.data), 'email']
+  );
+}
+
+// ============= DAILY ALERT JOB (run via cron) =============
+app.post("/api/admin/run-daily-alerts", async (req, res) => {
+  // TODO: Add admin authentication
+  // const adminKey = req.headers["x-admin-key"];
+  // if (adminKey !== process.env.ADMIN_SECRET_KEY) {
+  //   return res.status(401).json({ success: false, message: "Unauthorized" });
+  // }
+  
+  try {
+    // Get all active stores
+    const stores = await pool.query(
+      `SELECT cs.id, cs.user_id, cs.store_origin, cs.access_token, u.email, u.company_name
+       FROM connected_stores cs
+       JOIN users u ON cs.user_id = u.id
+       WHERE cs.is_active = true`
+    );
+    
+    let processedCount = 0;
+    let alertsSent = 0;
+    
+    for (const store of stores.rows) {
+      try {
+        // Fetch today's data
+        const data = await fetchShopifyDailyData(store.store_origin, store.access_token);
+        
+        // Save snapshot
+        await saveDailySnapshot(store.id, data);
+        
+        // Detect alerts
+        const alerts = await detectAlerts(store.id, store.user_id);
+        
+        // Log all alerts
+        for (const alert of alerts) {
+          await logAlert(store.user_id, store.id, alert);
+        }
+        
+        // Send email if there are alerts
+        if (alerts.length > 0) {
+          await sendAlertEmail(store.email, store.company_name, store.store_origin, alerts, data);
+          alertsSent += alerts.length;
+        }
+        
+        processedCount++;
+        
+      } catch (storeErr) {
+        console.error(`Error processing store ${store.id}:`, storeErr);
+      }
+    }
+    
+    return res.json({
+      success: true,
+      message: `Processed ${processedCount} stores, sent ${alertsSent} alerts`
+    });
+    
+  } catch (err) {
+    console.error("Daily alerts job error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ============= GET USER'S ALERTS =============
+app.get("/api/alerts", authenticateToken, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    
+    const result = await pool.query(
+      `SELECT * FROM alerts_log 
+       WHERE user_id = $1 
+       ORDER BY sent_at DESC 
+       LIMIT $2`,
+      [req.user.userId, limit]
+    );
+    
+    return res.json({ success: true, alerts: result.rows });
+  } catch (err) {
+    console.error("Get alerts error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch alerts" });
+  }
+});
+
+// ============= GET ALERT PREFERENCES =============
+app.get("/api/alerts/preferences", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM alert_preferences WHERE user_id = $1`,
+      [req.user.userId]
+    );
+    
+    if (result.rows.length === 0) {
+      // Create default preferences
+      const inserted = await pool.query(
+        `INSERT INTO alert_preferences (user_id) VALUES ($1) RETURNING *`,
+        [req.user.userId]
+      );
+      return res.json({ success: true, preferences: inserted.rows[0] });
+    }
+    
+    return res.json({ success: true, preferences: result.rows[0] });
+  } catch (err) {
+    console.error("Get preferences error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch preferences" });
+  }
+});
+
+// ============= UPDATE ALERT PREFERENCES =============
+app.put("/api/alerts/preferences", authenticateToken, async (req, res) => {
+  try {
+    const {
+      email_enabled,
+      email_frequency,
+      revenue_alerts,
+      inventory_alerts,
+      customer_alerts,
+      order_alerts,
+      revenue_spike_threshold,
+      revenue_drop_threshold,
+      low_stock_threshold,
+      high_value_order_amount
+    } = req.body;
+    
+    const result = await pool.query(
+      `UPDATE alert_preferences SET
+        email_enabled = COALESCE($2, email_enabled),
+        email_frequency = COALESCE($3, email_frequency),
+        revenue_alerts = COALESCE($4, revenue_alerts),
+        inventory_alerts = COALESCE($5, inventory_alerts),
+        customer_alerts = COALESCE($6, customer_alerts),
+        order_alerts = COALESCE($7, order_alerts),
+        revenue_spike_threshold = COALESCE($8, revenue_spike_threshold),
+        revenue_drop_threshold = COALESCE($9, revenue_drop_threshold),
+        low_stock_threshold = COALESCE($10, low_stock_threshold),
+        high_value_order_amount = COALESCE($11, high_value_order_amount),
+        updated_at = NOW()
+       WHERE user_id = $1
+       RETURNING *`,
+      [
+        req.user.userId, email_enabled, email_frequency, revenue_alerts,
+        inventory_alerts, customer_alerts, order_alerts, revenue_spike_threshold,
+        revenue_drop_threshold, low_stock_threshold, high_value_order_amount
+      ]
+    );
+    
+    return res.json({ success: true, preferences: result.rows[0] });
+  } catch (err) {
+    console.error("Update preferences error:", err);
+    return res.status(500).json({ success: false, message: "Failed to update preferences" });
+  }
+});
+
 // ============= START SERVER =============
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
