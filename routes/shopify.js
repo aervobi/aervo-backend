@@ -36,32 +36,41 @@ function getUserIdFromToken(req) {
   }
 }
 
-  router.get("/", async (req, res) => {
-    try {
-      const shop = String(req.query.shop || "").trim().toLowerCase();
+ router.get("/", async (req, res) => {
+  try {
+    const shop = String(req.query.shop || "").trim().toLowerCase();
 
-      if (!shop || !shop.endsWith(".myshopify.com")) {
-        return res.status(400).send("Invalid shop domain.");
-      }
-
-      const state = crypto.randomBytes(16).toString("hex");
-      const userId = getUserIdFromToken(req);
-
-      await pool.query(
-        `INSERT INTO shopify_oauth_states (shop_origin, state, user_id, created_at)
-         VALUES ($1, $2, $3, NOW())`,
-        [shop, state, userId]
-      );
-
-      const redirectUri  = `${APP_URL}/auth/shopify/callback`;
-      const installUrl   = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
-
-      return res.redirect(installUrl);
-    } catch (err) {
-      console.error("OAuth initiation error:", err);
-      return res.status(500).send("OAuth failed to start.");
+    if (!shop || !shop.endsWith(".myshopify.com")) {
+      return res.status(400).send("Invalid shop domain.");
     }
-  });
+
+    const state = crypto.randomBytes(16).toString("hex");
+    
+    // Get userId from token in query params OR header
+    let userId = getUserIdFromToken(req);
+    
+    console.log("🔍 OAuth initiation - userId:", userId);  // ADD THIS LOG
+    
+    if (!userId) {
+      console.log("❌ No userId found - user not authenticated");
+      return res.status(401).send("Authentication required. Please log in first.");
+    }
+
+    await pool.query(
+      `INSERT INTO shopify_oauth_states (shop_origin, state, user_id, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [shop, state, userId]
+    );
+
+    const redirectUri  = `${APP_URL}/auth/shopify/callback`;
+    const installUrl   = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+
+    return res.redirect(installUrl);
+  } catch (err) {
+    console.error("OAuth initiation error:", err);
+    return res.status(500).send("OAuth failed to start.");
+  }
+});
 
   router.get("/callback", async (req, res) => {
   try {
