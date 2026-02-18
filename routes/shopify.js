@@ -43,9 +43,14 @@ function getUserIdFromToken(req) {
   }
 }
 
- router.get("/", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
+    console.log("🔍 OAuth initiation request received");
+    console.log("Query params:", req.query);
+    console.log("Token in query:", req.query.token ? `${req.query.token.substring(0, 30)}...` : "NULL");
+    
     const shop = String(req.query.shop || "").trim().toLowerCase();
+   
 
     if (!shop || !shop.endsWith(".myshopify.com")) {
       return res.status(400).send("Invalid shop domain.");
