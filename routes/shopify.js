@@ -17,17 +17,24 @@ module.exports = function (pool) {
 
   const jwt = require("jsonwebtoken");
 
-  function getUserIdFromToken(req) {
-    try {
-      const authHeader = req.headers["authorization"];
-      const token = authHeader && authHeader.split(" ")[1];
-      if (!token) return null;
-      const decoded = jwt.verify(token, JWT_SECRET);
-      return decoded.userId || null;
-    } catch {
-      return null;
+function getUserIdFromToken(req) {
+  try {
+    // Try to get token from Authorization header first
+    let authHeader = req.headers["authorization"];
+    let token = authHeader && authHeader.split(" ")[1];
+    
+    // If not in header, check query params (for OAuth flow from integrations page)
+    if (!token) {
+      token = req.query.token;
     }
+    
+    if (!token) return null;
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded.userId || null;
+  } catch {
+    return null;
   }
+}
 
   router.get("/", async (req, res) => {
     try {
