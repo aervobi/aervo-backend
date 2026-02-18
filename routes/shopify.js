@@ -24,14 +24,21 @@ function getUserIdFromToken(req) {
     let token = authHeader && authHeader.split(" ")[1];
     
     // If not in header, check query params (for OAuth flow from integrations page)
-    if (!token) {
+    if (!token && req.query && req.query.token) {
       token = req.query.token;
+      console.log("🔍 Got token from query params, length:", token.length);
     }
     
-    if (!token) return null;
+    if (!token) {
+      console.log("❌ No token found in header or query");
+      return null;
+    }
+    
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log("✅ Token decoded, userId:", decoded.userId);
     return decoded.userId || null;
-  } catch {
+  } catch (err) {
+    console.error("❌ Token verification failed:", err.message);
     return null;
   }
 }
