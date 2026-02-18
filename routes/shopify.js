@@ -1,6 +1,5 @@
 // backend/routes/shopify.js
-// UPDATED: saves user_id when a Shopify store connects
-// so each shop is permanently linked to the merchant account
+// UPDATED: Saves to connected_stores table for multi-store support
 
 const express = require("express");
 const crypto  = require("crypto");
@@ -18,9 +17,6 @@ module.exports = function (pool) {
 
   const jwt = require("jsonwebtoken");
 
-  // ============= HELPER: Get user from JWT =============
-  // Extracts userId from the JWT token if present
-  // Returns null if no token (merchant not logged in yet)
   function getUserIdFromToken(req) {
     try {
       const authHeader = req.headers["authorization"];
@@ -33,8 +29,6 @@ module.exports = function (pool) {
     }
   }
 
-  // ============= STEP 1: Initiate OAuth =============
-  // Merchant clicks "Connect Shopify" → we redirect them to Shopify
   router.get("/", async (req, res) => {
     try {
       const shop = String(req.query.shop || "").trim().toLowerCase();
@@ -43,14 +37,9 @@ module.exports = function (pool) {
         return res.status(400).send("Invalid shop domain.");
       }
 
-      // Generate a secure random state for CSRF protection
       const state = crypto.randomBytes(16).toString("hex");
-
-      // Get the userId from JWT if the merchant is logged in
-      // This links their Aervo account to their Shopify store
       const userId = getUserIdFromToken(req);
 
-      // Save state + userId in DB so we can retrieve it in the callback
       await pool.query(
         `INSERT INTO shopify_oauth_states (shop_origin, state, user_id, created_at)
          VALUES ($1, $2, $3, NOW())`,
@@ -67,8 +56,6 @@ module.exports = function (pool) {
     }
   });
 
-  // ============= STEP 2: OAuth Callback =============
-  // Shopify redirects back here after merchant approves
   router.get("/callback", async (req, res) => {
     try {
       const { shop, code, state, hmac } = req.query;
@@ -77,7 +64,7 @@ module.exports = function (pool) {
         return res.status(400).send("Missing required OAuth parameters.");
       }
 
-      // ---- Verify HMAC ----
+      // Verify HMAC
       const queryParams = Object.entries(req.query)
         .filter(([key]) => key !== "hmac")
         .sort(([a], [b]) => a.localeCompare(b))
@@ -90,10 +77,10 @@ module.exports = function (pool) {
         .digest("hex");
 
       if (expectedHmac !== hmac) {
-        return res.status(401).send("Invalid HMAC. Request may have been tampered with.");
+        return res.status(401).send("Invalid HMAC.");
       }
 
-      // ---- Verify state and get userId ----
+      // Verify state
       const stateResult = await pool.query(
         `SELECT user_id FROM shopify_oauth_states
          WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
@@ -106,13 +93,12 @@ module.exports = function (pool) {
 
       const userId = stateResult.rows[0].user_id;
 
-      // Clean up the used state
       await pool.query(
         `DELETE FROM shopify_oauth_states WHERE shop_origin = $1 AND state = $2`,
         [shop, state]
       );
 
-      // ---- Exchange code for access token ----
+      // Exchange code for access token
       const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -124,17 +110,16 @@ module.exports = function (pool) {
       });
 
       if (!tokenResponse.ok) {
-        return res.status(500).send("Failed to exchange OAuth code for access token.");
+        return res.status(500).send("Failed to exchange OAuth code.");
       }
 
       const tokenData = await tokenResponse.json();
       const { access_token, scope } = tokenData;
 
-      // ---- Save shop + link to user ----
-      // If the shop already exists (reinstall), update it and link to user
+      // Save to OLD shops table for backwards compatibility
       await pool.query(
-        `INSERT INTO shops (shop_origin, access_token, scope, user_id, installed_at)
-         VALUES ($1, $2, $3, $4, NOW())
+        `INSERT INTO shops (shop_origin, access_token, scope, user_id, store_name, installed_at)
+         VALUES ($1, $2, $3, $4, $1, NOW())
          ON CONFLICT (shop_origin)
          DO UPDATE SET
            access_token = EXCLUDED.access_token,
@@ -144,10 +129,32 @@ module.exports = function (pool) {
         [shop, access_token, scope, userId]
       );
 
-      console.log(`✅ Shop ${shop} connected${userId ? ` to user ${userId}` : " (no user)"}`);
+      // Save to NEW connected_stores table (multi-store support)
+      await pool.query(
+        `INSERT INTO connected_stores (
+           user_id, integration_name, store_id, store_name, 
+           store_origin, access_token, is_active, connected_at
+         )
+         VALUES ($1, 'shopify', $2, $3, $2, $4, true, NOW())
+         ON CONFLICT (user_id, integration_name, store_id)
+         DO UPDATE SET
+           access_token = EXCLUDED.access_token,
+           is_active    = EXCLUDED.is_active,
+           updated_at   = NOW()`,
+        [userId, shop, shop, access_token]
+      );
 
-      // ---- Redirect back to dashboard ----
-      return res.redirect(`${FRONTEND_URL}/dashboard.html?shop=${shop}&connected=1`);
+      // Mark all other stores for this user as inactive (only one active at a time)
+      await pool.query(
+        `UPDATE connected_stores 
+         SET is_active = false 
+         WHERE user_id = $1 AND store_id != $2`,
+        [userId, shop]
+      );
+
+      console.log(`✅ Shop ${shop} connected to user ${userId}`);
+
+      return res.redirect(`${FRONTEND_URL}/integrations.html?connected=1`);
 
     } catch (err) {
       console.error("OAuth callback error:", err);

@@ -159,7 +159,144 @@ function isLastMonth(date) {
   return date >= last && date < new Date();
 }
 
-// ============= GET CURRENT USER =============
+// ============================================================
+// MULTI-INTEGRATION BACKEND ENDPOINTS
+// Add to your index.js (before const PORT line)
+// ============================================================
+
+// ============= GET ALL AVAILABLE INTEGRATIONS =============
+app.get("/api/integrations", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, display_name, description, icon_url, is_active 
+       FROM integrations 
+       WHERE is_active = true 
+       ORDER BY name`
+    );
+
+    return res.json({
+      success: true,
+      integrations: result.rows
+    });
+  } catch (err) {
+    console.error("Get integrations error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch integrations" });
+  }
+});
+
+// ============= GET USER'S CONNECTED STORES =============
+app.get("/api/integrations/connected", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, integration_name, store_id, store_name, store_origin, 
+              is_active, connected_at, last_sync_at
+       FROM connected_stores 
+       WHERE user_id = $1 
+       ORDER BY is_active DESC, connected_at DESC`,
+      [req.user.userId]
+    );
+
+    return res.json({
+      success: true,
+      stores: result.rows
+    });
+  } catch (err) {
+    console.error("Get connected stores error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch connected stores" });
+  }
+});
+
+// ============= SET ACTIVE STORE =============
+app.post("/api/integrations/set-active", authenticateToken, async (req, res) => {
+  try {
+    const { storeId } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, message: "Store ID required" });
+    }
+
+    // Verify store belongs to user
+    const checkStore = await pool.query(
+      `SELECT id FROM connected_stores WHERE id = $1 AND user_id = $2`,
+      [storeId, req.user.userId]
+    );
+
+    if (checkStore.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Store not found" });
+    }
+
+    // Set all stores to inactive
+    await pool.query(
+      `UPDATE connected_stores SET is_active = false WHERE user_id = $1`,
+      [req.user.userId]
+    );
+
+    // Set selected store to active
+    await pool.query(
+      `UPDATE connected_stores SET is_active = true WHERE id = $1`,
+      [storeId]
+    );
+
+    // Update user preferences
+    await pool.query(
+      `INSERT INTO user_preferences (user_id, active_store_id, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id) 
+       DO UPDATE SET active_store_id = $2, updated_at = NOW()`,
+      [req.user.userId, storeId]
+    );
+
+    return res.json({ success: true, message: "Active store updated" });
+  } catch (err) {
+    console.error("Set active store error:", err);
+    return res.status(500).json({ success: false, message: "Failed to set active store" });
+  }
+});
+
+// ============= DISCONNECT STORE =============
+app.delete("/api/integrations/disconnect/:storeId", authenticateToken, async (req, res) => {
+  try {
+    const { storeId } = req.params;
+
+    // Verify store belongs to user
+    const checkStore = await pool.query(
+      `SELECT id FROM connected_stores WHERE id = $1 AND user_id = $2`,
+      [storeId, req.user.userId]
+    );
+
+    if (checkStore.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Store not found" });
+    }
+
+    // Delete the store
+    await pool.query(
+      `DELETE FROM connected_stores WHERE id = $1`,
+      [storeId]
+    );
+
+    // If this was the active store, set another one as active
+    const remainingStores = await pool.query(
+      `SELECT id FROM connected_stores WHERE user_id = $1 LIMIT 1`,
+      [req.user.userId]
+    );
+
+    if (remainingStores.rows.length > 0) {
+      await pool.query(
+        `UPDATE connected_stores SET is_active = true WHERE id = $1`,
+        [remainingStores.rows[0].id]
+      );
+    }
+
+    return res.json({ success: true, message: "Store disconnected" });
+  } catch (err) {
+    console.error("Disconnect store error:", err);
+    return res.status(500).json({ success: false, message: "Failed to disconnect store" });
+  }
+});
+
+// ============= UPDATE /api/user/me TO RETURN ACTIVE STORE =============
+// Replace your existing /api/user/me with this version:
+
 app.get("/api/user/me", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -174,11 +311,37 @@ app.get("/api/user/me", authenticateToken, async (req, res) => {
 
     const user = result.rows[0];
 
-    // ⭐ Only return THIS user's connected shop
-    const shopResult = await pool.query(
-      `SELECT shop_origin, installed_at FROM shops WHERE user_id = $1 LIMIT 1`,
+    // Get user's active store from new connected_stores table
+    const storeResult = await pool.query(
+      `SELECT id, integration_name, store_name, store_origin, connected_at 
+       FROM connected_stores 
+       WHERE user_id = $1 AND is_active = true 
+       LIMIT 1`,
       [req.user.userId]
     );
+
+    // If no active store, get the most recent one
+    let activeStore = null;
+    if (storeResult.rows.length === 0) {
+      const anyStore = await pool.query(
+        `SELECT id, integration_name, store_name, store_origin, connected_at 
+         FROM connected_stores 
+         WHERE user_id = $1 
+         ORDER BY connected_at DESC 
+         LIMIT 1`,
+        [req.user.userId]
+      );
+      if (anyStore.rows.length > 0) {
+        activeStore = anyStore.rows[0];
+        // Set it as active
+        await pool.query(
+          `UPDATE connected_stores SET is_active = true WHERE id = $1`,
+          [activeStore.id]
+        );
+      }
+    } else {
+      activeStore = storeResult.rows[0];
+    }
 
     return res.json({
       success: true,
@@ -191,9 +354,11 @@ app.get("/api/user/me", authenticateToken, async (req, res) => {
         createdAt: user.created_at,
         lastLogin: user.last_login,
       },
-      shop: shopResult.rows.length > 0 ? {
-        shopOrigin: shopResult.rows[0].shop_origin,
-        installedAt: shopResult.rows[0].installed_at,
+      shop: activeStore ? {
+        shopOrigin: activeStore.store_origin,
+        installedAt: activeStore.connected_at,
+        storeName: activeStore.store_name,
+        integration: activeStore.integration_name
       } : null,
     });
   } catch (err) {
