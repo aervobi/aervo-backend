@@ -129,19 +129,27 @@ module.exports = function (pool) {
         [shop, access_token, scope, userId]
       );
 
-    // Save to NEW connected_stores table (multi-store support)
+// Save to NEW connected_stores table (multi-store support)
 await pool.query(
   `INSERT INTO connected_stores (
      user_id, integration_name, store_id, store_name, 
      store_origin, access_token, is_active, connected_at
    )
-   VALUES ($1::integer, 'shopify', $2::varchar, $3::varchar, $2::varchar, $4::text, true, NOW())
+   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
    ON CONFLICT (user_id, integration_name, store_id)
    DO UPDATE SET
      access_token = EXCLUDED.access_token,
      is_active    = EXCLUDED.is_active,
      updated_at   = NOW()`,
-  [userId, shop, shop, access_token]
+  [
+    userId,                    // $1
+    'shopify',                 // $2
+    String(shop),              // $3 - explicitly convert to string
+    String(shop),              // $4 - explicitly convert to string
+    String(shop),              // $5 - explicitly convert to string
+    String(access_token),      // $6 - explicitly convert to string
+    true                       // $7
+  ]
 );
 
       // Mark all other stores for this user as inactive (only one active at a time)
