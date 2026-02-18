@@ -1177,13 +1177,9 @@ async function logAlert(userId, storeId, alert) {
 
 // ============= DAILY ALERT JOB (run via cron) =============
 app.post("/api/admin/run-daily-alerts", async (req, res) => {
-  // TODO: Add admin authentication
-  // const adminKey = req.headers["x-admin-key"];
-  // if (adminKey !== process.env.ADMIN_SECRET_KEY) {
-  //   return res.status(401).json({ success: false, message: "Unauthorized" });
-  // }
-  
   try {
+    console.log("🔔 Starting daily alerts job...");
+    
     // Get all active stores
     const stores = await pool.query(
       `SELECT cs.id, cs.user_id, cs.store_origin, cs.access_token, u.email, u.company_name
@@ -1191,6 +1187,9 @@ app.post("/api/admin/run-daily-alerts", async (req, res) => {
        JOIN users u ON cs.user_id = u.id
        WHERE cs.is_active = true`
     );
+    
+    console.log("📊 Query returned:", stores.rows.length, "stores");
+    console.log("Stores found:", JSON.stringify(stores.rows, null, 2));
     
     let processedCount = 0;
     let alertsSent = 0;
