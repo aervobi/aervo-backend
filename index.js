@@ -31,8 +31,11 @@ app.use(express.urlencoded({ extended: true }));
 
 
 app.use((req, res, next) => {
-  if (req.originalUrl === "/shopify/webhooks") {
-    return next();
+  if (req.originalUrl === "/integrations/square/webhooks") {
+    let rawBody = "";
+    req.on("data", (chunk) => { rawBody += chunk.toString(); });
+    req.on("end", () => { req.rawBody = rawBody; next(); });
+    return;
   }
   next();
 });
@@ -124,6 +127,8 @@ function authenticateToken(req, res, next) {
 
 const shopifyRouter = require("./routes/shopify")(pool);
 app.use("/auth/shopify", shopifyRouter);
+const squareRoutes = require("./integrations/square/routes");
+app.use("/integrations/square", squareRoutes);
 
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
