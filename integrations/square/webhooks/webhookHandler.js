@@ -14,12 +14,10 @@ function verifyWebhookSignature(body, signature, notificationUrl) {
     console.warn('SQUARE_WEBHOOK_SIGNATURE_KEY not set — skipping signature verification');
     return true;
   }
-
   const payload = notificationUrl + body;
   const hmac = crypto.createHmac('sha256', signingKey);
   hmac.update(payload);
   const expected = hmac.digest('base64');
-
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
@@ -42,8 +40,7 @@ async function handleWebhookEvent(req, res) {
 
 async function processEvent(event) {
   const { type, merchant_id: squareMerchantId, data } = event;
-
-  console.log('Processing Square webhook', { type, squareMerchantId });
+  console.log('Processing Square webhook:', type);
 
   const tokens = await getTokensBySquareMerchant(squareMerchantId);
   if (!tokens) {
@@ -55,6 +52,8 @@ async function processEvent(event) {
   const client = buildSquareClient(accessToken);
 
   switch (type) {
+
+    // ── Orders ────────────────────────────────────────────────────────────────
     case 'order.created':
     case 'order.updated':
     case 'order.fulfillment.updated': {
@@ -65,40 +64,65 @@ async function processEvent(event) {
       break;
     }
 
+    // ── Payments ──────────────────────────────────────────────────────────────
+    case 'payment.created':
+    case 'payment.updated': {
+      const payment = data?.object?.payment;
+      if (payment?.orderId) await syncSingleOrder(client, aervMerchantId, payment.orderId);
+      if (payment) await upsertPayment(payment, aervMerchantId);
+      break;
+    }
+
+    // ── Customers ─────────────────────────────────────────────────────────────
     case 'customer.created':
     case 'customer.updated': {
       const customer = data?.object?.customer;
       if (customer) await upsertCustomers([customer], aervMerchantId);
       break;
     }
-
     case 'customer.deleted': {
       const customerId = data?.object?.customer?.id;
       if (customerId) await softDeleteCustomer(aervMerchantId, customerId);
       break;
     }
 
+    // ── Appointments ──────────────────────────────────────────────────────────
     case 'booking.created':
     case 'booking.updated': {
       const booking = data?.object?.booking;
       if (booking) await upsertAppointments([booking], aervMerchantId, booking.locationId);
       break;
     }
-
     case 'booking.cancelled': {
       const booking = data?.object?.booking;
       if (booking) await upsertAppointments([{ ...booking, status: 'CANCELLED' }], aervMerchantId, booking.locationId);
       break;
     }
 
+    // ── Catalog / Menu ────────────────────────────────────────────────────────
     case 'catalog.version.updated': {
       console.log('Catalog updated, triggering re-sync', { aervMerchantId });
       await syncCatalog({ client, merchantId: aervMerchantId });
       break;
     }
 
+    // ── Inventory ─────────────────────────────────────────────────────────────
+    case 'inventory.count.updated': {
+      const counts = data?.object?.counts || [];
+      if (counts.length) await upsertInventoryCounts(counts, aervMerchantId);
+      break;
+    }
+
+    // ── Team Members / Staff ──────────────────────────────────────────────────
+    case 'team_member.created':
+    case 'team_member.updated': {
+      const teamMember = data?.object?.team_member;
+      if (teamMember) await upsertTeamMember(teamMember, aervMerchantId);
+      break;
+    }
+
     default:
-      console.log('Unhandled Square webhook event type', { type });
+      console.log('Unhandled Square webhook event type:', type);
   }
 }
 
@@ -117,18 +141,69 @@ async function softDeleteCustomer(merchantId, squareCustomerId) {
   );
 }
 
+async function upsertPayment(payment, merchantId) {
+  await pool.query(
+    `INSERT INTO square_payments
+       (square_payment_id, aervo_merchant_id, square_order_id, square_customer_id,
+        amount, tip_amount, currency, status, source_type, card_brand,
+        location_id, created_at, updated_at, raw_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (square_payment_id) DO UPDATE SET
+       status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, raw_data=EXCLUDED.raw_data`,
+    [
+      payment.id, merchantId, payment.orderId || null, payment.customerId || null,
+      payment.amountMoney?.amount || 0, payment.tipMoney?.amount || 0,
+      payment.amountMoney?.currency || 'USD', payment.status,
+      payment.sourceType || null,
+      payment.cardDetails?.card?.cardBrand || null,
+      payment.locationId || null,
+      payment.createdAt, payment.updatedAt,
+      JSON.stringify(payment),
+    ]
+  ).catch(err => console.warn('Could not upsert payment:', err.message));
+}
+
+async function upsertInventoryCounts(counts, merchantId) {
+  for (const count of counts) {
+    await pool.query(
+      `INSERT INTO square_inventory
+         (aervo_merchant_id, catalog_object_id, location_id, quantity, status, calculated_at)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (aervo_merchant_id, catalog_object_id, location_id) DO UPDATE SET
+         quantity=EXCLUDED.quantity, status=EXCLUDED.status, calculated_at=EXCLUDED.calculated_at`,
+      [
+        merchantId, count.catalogObjectId, count.locationId,
+        parseFloat(count.quantity || 0), count.state,
+        count.calculatedAt || new Date().toISOString(),
+      ]
+    ).catch(err => console.warn('Could not upsert inventory count:', err.message));
+  }
+}
+
+async function upsertTeamMember(member, merchantId) {
+  await pool.query(
+    `INSERT INTO square_team_members
+       (square_team_member_id, aervo_merchant_id, given_name, family_name,
+        status, email_address, phone_number, created_at, updated_at, raw_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (square_team_member_id) DO UPDATE SET
+       given_name=EXCLUDED.given_name, family_name=EXCLUDED.family_name,
+       status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, raw_data=EXCLUDED.raw_data`,
+    [
+      member.id, merchantId, member.givenName || null, member.familyName || null,
+      member.status || null, member.emailAddress || null, member.phoneNumber || null,
+      member.createdAt, member.updatedAt, JSON.stringify(member),
+    ]
+  ).catch(err => console.warn('Could not upsert team member:', err.message));
+}
+
 async function getTokensBySquareMerchant(squareMerchantId) {
   const result = await pool.query(
-    `SELECT aervo_merchant_id, access_token_enc, refresh_token_enc, expires_at
-     FROM square_connections WHERE square_merchant_id = $1`,
+    `SELECT aervo_merchant_id FROM square_connections WHERE square_merchant_id = $1`,
     [squareMerchantId]
   );
   if (!result.rows.length) return null;
-  const row = result.rows[0];
-  return {
-    aervMerchantId: row.aervo_merchant_id,
-    accessToken: await getTokensByMerchant(row.aervo_merchant_id).then(t => t?.accessToken),
-  };
+  return await getTokensByMerchant(result.rows[0].aervo_merchant_id);
 }
 
 module.exports = { handleWebhookEvent, verifyWebhookSignature };
