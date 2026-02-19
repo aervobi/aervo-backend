@@ -107,22 +107,21 @@ module.exports = function (pool) {
         [shop, access_token, scope]
       );
 
-      // ALSO save to connected_stores for dashboard
-      // Get the user_id from the shop (you'll need to query for this)
-      // For now, let's just insert without user_id
+  // Save to shops table
       await pool.query(
-        `INSERT INTO connected_stores (
-           integration_name, store_id, store_name, store_origin, 
-           access_token, is_active, connected_at
-         )
-         VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::text, true, NOW())
-         ON CONFLICT (integration_name, store_id) 
+        `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at)
+         VALUES ($1::text, $2::text, $3::text, $1::text, NOW())
+         ON CONFLICT (shop_origin)
          DO UPDATE SET
            access_token = EXCLUDED.access_token,
-           is_active = true,
-           updated_at = NOW()`,
-        ['shopify', shop, shop, shop, access_token]
+           scope        = EXCLUDED.scope,
+           installed_at = NOW()`,
+        [shop, access_token, scope]
       );
+
+      console.log(`✅ Shop ${shop} connected successfully`);
+
+      return res.redirect(`${FRONTEND_URL}/dashboard.html?connected=1`);
 
       console.log(`✅ Shop ${shop} connected successfully`);
 
