@@ -28,13 +28,7 @@ app.use(cors());
 app.use(express.json());                          
 app.use(express.urlencoded({ extended: true }));
 
-// Debug ALL incoming requests
-app.use((req, res, next) => {
-  console.log(`🌐 ${req.method} ${req.path}`);
-  console.log("Body:", req.body);
-  console.log("Headers:", Object.keys(req.headers));
-  next();
-});
+
 
 app.use((req, res, next) => {
   if (req.originalUrl === "/shopify/webhooks") {
