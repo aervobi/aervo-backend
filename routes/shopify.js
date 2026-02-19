@@ -98,26 +98,34 @@ router.get("/", async (req, res) => {
   try {
     console.log("🔍 OAuth initiation request received");
     console.log("Query params:", req.query);
-    console.log("Token in query:", req.query.token ? `${req.query.token.substring(0, 30)}...` : "NULL");
     
     const shop = String(req.query.shop || "").trim().toLowerCase();
-   
+    const tokenFromQuery = req.query.token; // Get token from URL
+    
+    console.log("Token in query:", tokenFromQuery ? `${tokenFromQuery.substring(0, 30)}...` : "NULL");
 
     if (!shop || !shop.endsWith(".myshopify.com")) {
       return res.status(400).send("Invalid shop domain.");
     }
 
-    const state = crypto.randomBytes(16).toString("hex");
-    
-    // Get userId from token in query params OR header
-    let userId = getUserIdFromToken(req);
-    
-    console.log("🔍 OAuth initiation - userId:", userId);  // ADD THIS LOG
+    // Get userId from token in query param
+    let userId = null;
+    if (tokenFromQuery) {
+      try {
+        const decoded = jwt.verify(tokenFromQuery, JWT_SECRET);
+        userId = decoded.userId;
+        console.log("✅ Token verified from query, userId:", userId);
+      } catch (err) {
+        console.log("❌ Invalid token:", err.message);
+      }
+    }
     
     if (!userId) {
       console.log("❌ No userId found - user not authenticated");
       return res.status(401).send("Authentication required. Please log in first.");
     }
+
+    const state = crypto.randomBytes(16).toString("hex");
 
     await pool.query(
       `INSERT INTO shopify_oauth_states (shop_origin, state, user_id, created_at)
