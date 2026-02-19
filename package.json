@@ -15,6 +15,7 @@
     "@anthropic-ai/sdk": "^0.74.0",
     "@sendgrid/mail": "^8.1.6",
     "@shopify/shopify-api": "^6.0.0",
+    "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
