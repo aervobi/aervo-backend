@@ -7,6 +7,13 @@ const fetch   = require("node-fetch");
 
 module.exports = function (pool) {
   const router = express.Router();
+  // Debug middleware - log ALL requests to /auth/shopify/*
+router.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path}`);
+  console.log("Body:", req.body);
+  console.log("Query:", req.query);
+  next();
+});
 
   const SHOPIFY_API_KEY    = process.env.SHOPIFY_API_KEY;
   const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
