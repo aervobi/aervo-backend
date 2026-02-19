@@ -42,6 +42,50 @@ function getUserIdFromToken(req) {
     return null;
   }
 }
+// POST endpoint to initiate OAuth (receives token securely)
+router.post("/initiate", express.json(), express.urlencoded({ extended: true }), async (req, res) => {
+  try {
+    const { shop, token } = req.body;
+    
+    console.log("🔍 POST initiate - shop:", shop);
+    console.log("🔍 POST initiate - token:", token ? `${token.substring(0, 30)}...` : "NULL");
+    
+    if (!shop || !shop.endsWith(".myshopify.com")) {
+      return res.status(400).send("Invalid shop domain.");
+    }
+    
+    if (!token) {
+      return res.status(401).send("Authentication required.");
+    }
+    
+    // Verify token
+    let userId;
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      userId = decoded.userId;
+      console.log("✅ Token verified, userId:", userId);
+    } catch (err) {
+      console.log("❌ Invalid token:", err.message);
+      return res.status(401).send("Invalid authentication token.");
+    }
+    
+    const state = crypto.randomBytes(16).toString("hex");
+    
+    await pool.query(
+      `INSERT INTO shopify_oauth_states (shop_origin, state, user_id, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [shop, state, userId]
+    );
+    
+    const redirectUri = `${APP_URL}/auth/shopify/callback`;
+    const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+    
+    return res.redirect(installUrl);
+  } catch (err) {
+    console.error("OAuth initiate error:", err);
+    return res.status(500).send("OAuth failed to start.");
+  }
+});
 
 router.get("/", async (req, res) => {
   try {
