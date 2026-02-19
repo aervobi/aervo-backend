@@ -99,7 +99,7 @@ module.exports = function (pool) {
       // Save to shops table
       await pool.query(
         `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at)
-         VALUES ($1, $2, $3, $1, NOW())
+         VALUES ($1::text, $2::text, $3::text, $1::text, NOW())
          ON CONFLICT (shop_origin)
          DO UPDATE SET
            access_token = EXCLUDED.access_token,
