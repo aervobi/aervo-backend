@@ -25,6 +25,8 @@ const {
 const app = express();
 app.set("trust proxy", 1);
 app.use(cors());
+app.use(express.json());                          
+app.use(express.urlencoded({ extended: true }));
 
 app.use((req, res, next) => {
   if (req.originalUrl === "/shopify/webhooks") return next();
