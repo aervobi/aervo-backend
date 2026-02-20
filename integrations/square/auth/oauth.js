@@ -49,9 +49,7 @@ async function handleOAuthCallback(req, res) {
 
   if (error) {
     console.warn('Square OAuth denied by merchant', { error });
-    return res.redirect(
-      `${process.env.AERVO_APP_URL}/dashboard?square_connect=denied`
-    );
+    return res.json({ success: false, message: 'Square connection denied.' });
   }
 
   const stateData = stateStore.get(state);
@@ -103,9 +101,14 @@ async function handleOAuthCallback(req, res) {
         console.error('Initial Square sync failed', { merchantId, error: err.message })
       );
 
-    res.redirect(
-      `${process.env.AERVO_APP_URL}/dashboard?square_connect=success&sync=started`
-    );
+    // Temporary success response until frontend dashboard is built
+    res.json({
+      success: true,
+      message: 'Square connected successfully! Data sync has started.',
+      merchantId,
+      squareMerchantId,
+    });
+
   } catch (err) {
     console.error('Square OAuth token exchange failed', {
       merchantId,
@@ -113,9 +116,7 @@ async function handleOAuthCallback(req, res) {
       error: err.response?.data || err.message,
     });
 
-    res.redirect(
-      `${process.env.AERVO_APP_URL}/dashboard?square_connect=error`
-    );
+    res.json({ success: false, message: 'Square connection error. Please try again.' });
   }
 }
 
