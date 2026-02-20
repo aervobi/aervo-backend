@@ -9,6 +9,7 @@ const SQUARE_OAUTH_BASE =
     ? 'https://connect.squareup.com'
     : 'https://connect.squareupsandbox.com';
 
+// Scopes compatible with both sandbox and production
 const REQUIRED_SCOPES = [
   'MERCHANT_PROFILE_READ',
   'PAYMENTS_READ',
@@ -19,7 +20,6 @@ const REQUIRED_SCOPES = [
   'APPOINTMENTS_READ',
   'APPOINTMENTS_WRITE',
   'INVENTORY_READ',
-  'EMPLOYEES_READ',
 ].join(' ');
 
 const stateStore = new Map();
