@@ -68,5 +68,39 @@ router.delete('/disconnect', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+router.get('/locations', async (req, res) => {
+  const { merchantId } = req.query;
+  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+  try {
+    const result = await pool.query(`SELECT * FROM square_locations WHERE aervo_merchant_id = $1 ORDER BY name`, [merchantId]);
+    res.json({ success: true, locations: result.rows });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
 
+router.get('/orders', async (req, res) => {
+  const { merchantId } = req.query;
+  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+  try {
+    const result = await pool.query(`SELECT * FROM square_orders WHERE aervo_merchant_id = $1 ORDER BY created_at DESC LIMIT 200`, [merchantId]);
+    res.json({ success: true, orders: result.rows });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.get('/customers', async (req, res) => {
+  const { merchantId } = req.query;
+  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+  try {
+    const result = await pool.query(`SELECT * FROM square_customers WHERE aervo_merchant_id = $1 ORDER BY created_at DESC LIMIT 500`, [merchantId]);
+    res.json({ success: true, customers: result.rows });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.get('/appointments', async (req, res) => {
+  const { merchantId } = req.query;
+  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+  try {
+    const result = await pool.query(`SELECT * FROM square_appointments WHERE aervo_merchant_id = $1 ORDER BY start_at DESC LIMIT 200`, [merchantId]);
+    res.json({ success: true, appointments: result.rows });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
 module.exports = router;
