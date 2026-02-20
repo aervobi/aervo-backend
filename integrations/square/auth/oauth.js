@@ -9,7 +9,6 @@ const SQUARE_OAUTH_BASE =
     ? 'https://connect.squareup.com'
     : 'https://connect.squareupsandbox.com';
 
-// Scopes compatible with both sandbox and production
 const REQUIRED_SCOPES = [
   'MERCHANT_PROFILE_READ',
   'PAYMENTS_READ',
@@ -18,7 +17,6 @@ const REQUIRED_SCOPES = [
   'CUSTOMERS_WRITE',
   'ITEMS_READ',
   'APPOINTMENTS_READ',
-  'APPOINTMENTS_WRITE',
   'INVENTORY_READ',
 ].join(' ');
 
@@ -42,7 +40,7 @@ function handleConnectRequest(req, res) {
   });
 
   const authUrl = `${SQUARE_OAUTH_BASE}/oauth2/authorize?${params}`;
-  console.log('Redirecting merchant to Square OAuth', { merchantId });
+  console.log('Redirecting merchant to Square OAuth:', authUrl);
   res.redirect(authUrl);
 }
 
