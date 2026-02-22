@@ -129,6 +129,9 @@ const shopifyRouter = require("./routes/shopify")(pool);
 app.use("/auth/shopify", shopifyRouter);
 const squareRoutes = require("./integrations/square/routes");
 app.use("/integrations/square", squareRoutes);
+// Stripe routes
+const stripeRoutes = require("./stripe/routes");
+app.use("/stripe", stripeRoutes);
 
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
