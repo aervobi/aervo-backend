@@ -30,8 +30,7 @@ router.get('/auth/google/callback', async (req, res) => {
     oauth2Client.setCredentials(tokens);
 
     // Get user info from Google
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const { data } = await oauth2.userinfo.get();
+    const { google } = require('googleapis');
 
     // Check if user exists
     let userResult = await pool.query(
