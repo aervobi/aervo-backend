@@ -4,17 +4,15 @@ const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { pool } = require('../db');
 
-// Price IDs from Stripe dashboard — we'll add these next
 const PLANS = {
-  essential_monthly: 'price_essential_monthly',
-  essential_annual:  'price_essential_annual',
-  pro_monthly:       'price_pro_monthly',
-  pro_annual:        'price_pro_annual',
-  business_monthly:  'price_business_monthly',
-  business_annual:   'price_business_annual',
+  essential_monthly: 'price_1T3VjkF2vcu0U1CfNPjrKtjj',
+  essential_annual:  'price_1T3VkuF2vcu0U1Cfb6Zm94uK',
+  pro_monthly:       'price_1T3VmhF2vcu0U1CfIkvMnIVy',
+  pro_annual:        'price_1T3Vn7F2vcu0U1Cfac3v6u08',
+  business_monthly:  'price_1T3VnxF2vcu0U1Cf7gmi8az0',
+  business_annual:   'price_1T3VoLF2vcu0U1CfB3oeV05a',
 };
 
-// Create checkout session
 router.post('/create-checkout', async (req, res) => {
   const { planId, userId, email } = req.body;
   try {
@@ -33,7 +31,6 @@ router.post('/create-checkout', async (req, res) => {
   }
 });
 
-// Get current plan
 router.get('/plan', async (req, res) => {
   const { userId } = req.query;
   try {
