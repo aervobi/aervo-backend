@@ -132,6 +132,9 @@ app.use("/integrations/square", squareRoutes);
 // Stripe routes
 const stripeRoutes = require("./stripe/routes");
 app.use("/stripe", stripeRoutes);
+//Google routes
+const googleRoutes = require('./routes/google');
+app.use('/', googleRoutes);
 
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
