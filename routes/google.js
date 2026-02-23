@@ -13,11 +13,11 @@ const oauth2Client = new google.auth.OAuth2(
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_me';
 
 // ============= GOOGLE SIGN IN - Get auth URL =============
-router.get('/auth/google', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['profile', 'email']
-  });
+const url = oauth2Client.generateAuthUrl({
+  access_type: 'offline',
+  scope: ['profile', 'email'],
+  redirect_uri: process.env.GOOGLE_REDIRECT_URL
+});
   res.json({ url });
 });
 
