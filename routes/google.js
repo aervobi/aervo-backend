@@ -24,9 +24,13 @@ router.get('/auth/google', (req, res) => {
 
 // ============= GOOGLE SIGN IN - Callback =============
 router.get('/auth/google/callback', async (req, res) => {
+ router.get('/auth/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
-    const { tokens } = await oauth2Client.getToken(code);
+    const { tokens } = await oauth2Client.getToken({
+      code: code,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URL
+    });
     oauth2Client.setCredentials(tokens);
 
     // Get user info from Google
