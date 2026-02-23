@@ -135,6 +135,10 @@ app.use("/stripe", stripeRoutes);
 //Google routes
 const googleRoutes = require('./routes/google');
 app.use('/', googleRoutes);
+// Onboarding routes
+const onboardingRoutes = require('./routes/onboarding');
+app.use('/', onboardingRoutes);
+
 
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
