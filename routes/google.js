@@ -13,11 +13,12 @@ const oauth2Client = new google.auth.OAuth2(
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_me';
 
 // ============= GOOGLE SIGN IN - Get auth URL =============
-const url = oauth2Client.generateAuthUrl({
-  access_type: 'offline',
-  scope: ['profile', 'email'],
-  redirect_uri: process.env.GOOGLE_REDIRECT_URL
-});
+router.get('/auth/google', (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['profile', 'email'],
+    redirect_uri: process.env.GOOGLE_REDIRECT_URL
+  });
   res.json({ url });
 });
 
@@ -29,7 +30,8 @@ router.get('/auth/google/callback', async (req, res) => {
     oauth2Client.setCredentials(tokens);
 
     // Get user info from Google
-    const { google } = require('googleapis');
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const { data } = await oauth2.userinfo.get();
 
     // Check if user exists
     let userResult = await pool.query(
@@ -39,7 +41,6 @@ router.get('/auth/google/callback', async (req, res) => {
 
     let user;
     if (userResult.rows.length === 0) {
-      // Create new user
       const insertResult = await pool.query(
         `INSERT INTO users (email, company_name, role, email_verified, google_id, avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -49,7 +50,6 @@ router.get('/auth/google/callback', async (req, res) => {
       user = insertResult.rows[0];
     } else {
       user = userResult.rows[0];
-      // Update google_id if not set
       await pool.query(
         'UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3',
         [data.id, data.picture, user.id]
@@ -62,8 +62,7 @@ router.get('/auth/google/callback', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    // Redirect to frontend with token
-    res.redirect(`https://aervoapp.com/welcome?token=${token}&name=${encodeURIComponent(data.given_name)}`);
+    res.redirect(`https://aervoapp.com/dashboard?token=${token}&name=${encodeURIComponent(data.given_name)}`);
 
   } catch (err) {
     console.error('Google auth error:', err);
