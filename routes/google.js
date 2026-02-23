@@ -49,14 +49,20 @@ router.get('/auth/google/callback', async (req, res) => {
         [data.email, data.name, 'Owner', true, data.id, data.picture]
       );
       user = insertResult.rows[0];
-    } else {
-      user = userResult.rows[0];
-      await pool.query(
-        'UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3',
-        [data.id, data.picture, user.id]
-      );
-    }
-
+   } else {
+  user = userResult.rows[0];
+  await pool.query(
+    'UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3',
+    [data.id, data.picture, user.id]
+  );
+  // Existing user — log them in and notify
+  const token = jwt.sign(
+    { userId: user.id, email: user.email },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  return res.redirect(`https://aervoapp.com/dashboard?token=${token}&existing=true`);
+}
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
