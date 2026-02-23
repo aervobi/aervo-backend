@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { OAuth2Client } = require('googleapis/build/src/auth/oauth2client');
 const { google } = require('googleapis');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
