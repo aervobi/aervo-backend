@@ -24,7 +24,6 @@ router.get('/auth/google', (req, res) => {
 
 // ============= GOOGLE SIGN IN - Callback =============
 router.get('/auth/google/callback', async (req, res) => {
- router.get('/auth/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
     const { tokens } = await oauth2Client.getToken({
@@ -33,11 +32,9 @@ router.get('/auth/google/callback', async (req, res) => {
     });
     oauth2Client.setCredentials(tokens);
 
-    // Get user info from Google
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const { data } = await oauth2.userinfo.get();
 
-    // Check if user exists
     let userResult = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [data.email]
