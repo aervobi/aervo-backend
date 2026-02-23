@@ -41,7 +41,10 @@ router.get('/auth/google/callback', async (req, res) => {
     );
 
     let user;
+    let isNewUser = false;
+
     if (userResult.rows.length === 0) {
+      isNewUser = true;
       const insertResult = await pool.query(
         `INSERT INTO users (email, company_name, role, email_verified, google_id, avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -49,27 +52,22 @@ router.get('/auth/google/callback', async (req, res) => {
         [data.email, data.name, 'Owner', true, data.id, data.picture]
       );
       user = insertResult.rows[0];
-   } else {
-  user = userResult.rows[0];
-  await pool.query(
-    'UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3',
-    [data.id, data.picture, user.id]
-  );
-  // Existing user — log them in and notify
-  const token = jwt.sign(
-    { userId: user.id, email: user.email },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
-  return res.redirect(`https://aervoapp.com/dashboard?token=${token}&existing=true`);
-}
+    } else {
+      user = userResult.rows[0];
+      await pool.query(
+        'UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3',
+        [data.id, data.picture, user.id]
+      );
+    }
+
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    res.redirect(`https://aervoapp.com/dashboard?token=${token}&name=${encodeURIComponent(data.given_name)}`);
+    const redirectPage = isNewUser ? 'onboarding' : 'dashboard';
+    res.redirect(`https://aervoapp.com/${redirectPage}?token=${token}&name=${encodeURIComponent(data.given_name)}`);
 
   } catch (err) {
     console.error('Google auth error:', err);
