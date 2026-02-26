@@ -584,6 +584,167 @@ View dashboard: ${appUrl}/dashboard.html
     text
   });
 }
+async function sendWeeklyDigestEmail(toEmail, companyName, storeName, weeklyData) {
+  const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
+  const year = new Date().getFullYear();
+
+  const topProductsHtml = (weeklyData.topProducts || []).slice(0, 5).map((p, i) => `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #1f2937;font-size:13px;color:#e5e7eb;">
+        ${i + 1}. ${p.name}
+      </td>
+      <td style="padding:10px 12px;border-bottom:1px solid #1f2937;font-size:13px;color:#10b981;text-align:right;font-weight:600;">
+        $${p.revenue.toFixed(2)}
+      </td>
+    </tr>
+  `).join('');
+
+  const revenueChangeColor = weeklyData.revenueChange >= 0 ? '#10b981' : '#ef4444';
+  const revenueChangeArrow = weeklyData.revenueChange >= 0 ? '↑' : '↓';
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Weekly Aervo Digest</title>
+</head>
+<body style="margin:0;padding:0;background:#020617;font-family:system-ui,-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px;background:#020617;">
+    <tr>
+      <td align="center">
+        <table width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#020617;border-radius:24px;border:1px solid #111827;box-shadow:0 30px 80px rgba(15,23,42,0.75);overflow:hidden;">
+
+          <tr>
+            <td align="center" style="padding:26px 32px 6px;background:#020617;">
+              <img src="${wordmarkUrl}" alt="Aervo" width="220" style="display:block;margin:0 auto;max-width:220px;height:auto;" />
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:10px 32px 18px;background:#020617;" align="left">
+              <h1 style="margin:0 0 10px 0;font-size:28px;line-height:1.3;color:#f9fafb;font-weight:650;">
+                Your weekly digest 📋
+              </h1>
+              <p style="margin:0;font-size:14px;line-height:1.7;color:#cbd5f5;">
+                Here's how <strong style="color:#e5e7eb;">${storeName}</strong> performed this week.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Weekly Stats -->
+          <tr>
+            <td style="padding:8px 32px 18px 32px;">
+              <p style="margin:0 0 14px;font-size:14px;font-weight:600;color:#e5e7eb;border-bottom:1px solid #1f2937;padding-bottom:8px;">
+                📊 This Week at a Glance
+              </p>
+              <table width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td width="50%" valign="top" style="padding-right:6px;">
+                    <div style="border-radius:12px;background:#050816;border:1px solid #111827;padding:14px;">
+                      <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Total Revenue</div>
+                      <div style="font-size:24px;font-weight:700;color:#10b981;">$${weeklyData.revenue.toFixed(2)}</div>
+                      <div style="font-size:12px;color:${revenueChangeColor};margin-top:4px;">${revenueChangeArrow} ${Math.abs(weeklyData.revenueChange).toFixed(1)}% vs last week</div>
+                    </div>
+                  </td>
+                  <td width="50%" valign="top" style="padding-left:6px;">
+                    <div style="border-radius:12px;background:#050816;border:1px solid #111827;padding:14px;">
+                      <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Total Orders</div>
+                      <div style="font-size:24px;font-weight:700;color:#3b82f6;">${weeklyData.orders}</div>
+                      <div style="font-size:12px;color:#9ca3af;margin-top:4px;">Avg $${weeklyData.avgOrderValue.toFixed(2)} each</div>
+                    </div>
+                  </td>
+                </tr>
+                <tr><td colspan="2" style="height:8px;"></td></tr>
+                <tr>
+                  <td width="50%" valign="top" style="padding-right:6px;">
+                    <div style="border-radius:12px;background:#050816;border:1px solid #111827;padding:14px;">
+                      <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">New Customers</div>
+                      <div style="font-size:20px;font-weight:600;color:#e5e7eb;">${weeklyData.newCustomers}</div>
+                    </div>
+                  </td>
+                  <td width="50%" valign="top" style="padding-left:6px;">
+                    <div style="border-radius:12px;background:#050816;border:1px solid #111827;padding:14px;">
+                      <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Out of Stock</div>
+                      <div style="font-size:20px;font-weight:600;color:${weeklyData.outOfStock > 0 ? '#ef4444' : '#10b981'};">${weeklyData.outOfStock}</div>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Top Products -->
+          ${topProductsHtml ? `
+          <tr>
+            <td style="padding:0 32px 18px 32px;">
+              <p style="margin:0 0 12px;font-size:14px;font-weight:600;color:#e5e7eb;border-bottom:1px solid #1f2937;padding-bottom:8px;">
+                🏆 Top Products This Week
+              </p>
+              <table width="100%" cellspacing="0" cellpadding="0" style="background:#050816;border-radius:12px;border:1px solid #111827;overflow:hidden;">
+                ${topProductsHtml}
+              </table>
+            </td>
+          </tr>
+          ` : ''}
+
+          <!-- Inventory Alert -->
+          ${weeklyData.outOfStock > 0 ? `
+          <tr>
+            <td style="padding:0 32px 18px 32px;">
+              <div style="background:#7f1d1d;border-left:3px solid #ef4444;border-radius:10px;padding:14px 16px;">
+                <div style="font-size:15px;font-weight:600;color:#f9fafb;margin-bottom:5px;">⚠️ ${weeklyData.outOfStock} products out of stock</div>
+                <div style="font-size:13px;color:#fca5a5;line-height:1.6;">Restock these items to avoid losing sales this week.</div>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+
+          <tr>
+            <td style="padding:4px 32px 26px 32px;" align="left">
+              <a href="${appUrl}/dashboard" style="display:inline-block;padding:12px 24px;border-radius:999px;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#f9fafb;text-decoration:none;font-size:14px;font-weight:600;box-shadow:0 14px 32px rgba(79,70,229,0.5);">Open your dashboard →</a>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:14px 32px 20px 32px;border-top:1px solid #111827;font-size:11px;color:#6b7280;">
+              You're receiving this weekly digest because you enabled it in Aervo settings.
+              <a href="${appUrl}/settings" style="color:#6366f1;">Manage preferences</a>
+              <br /><br />© ${year} Aervo. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `Weekly Aervo Digest - ${storeName}
+
+This Week:
+Revenue: $${weeklyData.revenue.toFixed(2)} (${revenueChangeArrow} ${Math.abs(weeklyData.revenueChange).toFixed(1)}% vs last week)
+Orders: ${weeklyData.orders}
+Avg Order Value: $${weeklyData.avgOrderValue.toFixed(2)}
+New Customers: ${weeklyData.newCustomers}
+Out of Stock: ${weeklyData.outOfStock}
+
+Top Products:
+${(weeklyData.topProducts || []).slice(0, 5).map((p, i) => `${i + 1}. ${p.name} - $${p.revenue.toFixed(2)}`).join('\n')}
+
+View dashboard: ${appUrl}/dashboard
+
+© ${year} Aervo`;
+
+  return safeSend({
+    to: toEmail,
+    subject: `📋 Weekly Digest - ${storeName}`,
+    html,
+    text
+  });
+}
 
 module.exports = {
   initSendgrid,
@@ -591,4 +752,5 @@ module.exports = {
   sendVerifyEmail,
   sendPasswordResetEmail,
   sendAlertEmail,
+  sendWeeklyDigestEmail,
 };

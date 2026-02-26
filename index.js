@@ -19,6 +19,7 @@ const {
   sendVerifyEmail,
   sendPasswordResetEmail,
   sendAlertEmail,
+  sendWeeklyDigestEmail,
 } = require("./utils/email");
 
 // ============= EXPRESS + DB SETUP =============
@@ -928,6 +929,13 @@ async function detectAlerts(storeId, userId) {
     
     if (storeResult.rows.length === 0) return alerts;
     const store = storeResult.rows[0];
+
+    // Check notification preferences
+const notifResult = await pool.query(
+  `SELECT * FROM notification_preferences WHERE user_id = $1`,
+  [userId]
+);
+const notifPrefs = notifResult.rows[0] || { revenue_alerts: true, inventory_alerts: true };
     
     // Fetch today's Shopify data
     const todayData = await fetchShopifyDailyData(store.store_origin, store.access_token);
@@ -945,7 +953,7 @@ async function detectAlerts(storeId, userId) {
     const yesterdayData = snapshotResult.rows[0] || null;
     
     // === REVENUE ALERTS ===
-    if (prefs.revenue_alerts && yesterdayData) {
+    if (prefs.revenue_alerts && notifPrefs.revenue_alerts && yesterdayData) {
       const revenueChange = yesterdayData.revenue > 0 
         ? ((todayData.revenue - parseFloat(yesterdayData.revenue)) / parseFloat(yesterdayData.revenue)) * 100
         : 0;
@@ -970,7 +978,7 @@ async function detectAlerts(storeId, userId) {
     }
     
     // === INVENTORY ALERTS ===
-    if (prefs.inventory_alerts) {
+    if (prefs.inventory_alerts && notifPrefs.inventory_alerts)
       if (todayData.outOfStockCount > 0) {
         alerts.push({
           type: 'out_of_stock',
@@ -1026,7 +1034,7 @@ async function detectAlerts(storeId, userId) {
     console.error("Alert detection error:", err);
     return [];
   }
-}
+
 
 async function fetchShopifyDailyData(shopOrigin, accessToken) {
   const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
@@ -1473,6 +1481,80 @@ app.put("/api/alerts/preferences", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("Update preferences error:", err);
     return res.status(500).json({ success: false, message: "Failed to update preferences" });
+  }
+});
+// ============= WEEKLY DIGEST JOB =============
+app.post("/api/admin/run-weekly-digest", async (req, res) => {
+  try {
+    console.log("📋 Starting weekly digest job...");
+
+    const users = await pool.query(
+      `SELECT u.id, u.email, u.company_name, np.weekly_digest,
+              cs.store_origin, cs.integration_name
+       FROM users u
+       JOIN notification_preferences np ON np.user_id = u.id
+       JOIN connected_stores cs ON cs.user_id = u.id AND cs.is_active = true
+       JOIN shops s ON s.shop_origin = cs.store_origin
+       WHERE np.weekly_digest = true AND cs.integration_name = 'shopify'`
+    );
+
+    let sent = 0;
+
+    for (const user of users.rows) {
+      try {
+        const accessToken = await getShopToken(user.store_origin, user.id);
+        const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+        const base = `https://${user.store_origin}/admin/api/${apiVersion}`;
+        const h = { "X-Shopify-Access-Token": accessToken };
+
+        const since = new Date();
+        since.setDate(since.getDate() - 7);
+        const lastWeek = new Date();
+        lastWeek.setDate(lastWeek.getDate() - 14);
+
+        const [ordersRes, lastWeekRes, productsRes] = await Promise.all([
+          fetch(`${base}/orders.json?status=any&limit=250&created_at_min=${since.toISOString()}`, { headers: h }),
+          fetch(`${base}/orders.json?status=any&limit=250&created_at_min=${lastWeek.toISOString()}&created_at_max=${since.toISOString()}`, { headers: h }),
+          fetch(`${base}/products.json?limit=250`, { headers: h }),
+        ]);
+
+        const orders = (await ordersRes.json()).orders || [];
+        const lastWeekOrders = (await lastWeekRes.json()).orders || [];
+        const products = (await productsRes.json()).products || [];
+
+        const revenue = orders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0);
+        const lastWeekRevenue = lastWeekOrders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0);
+        const revenueChange = lastWeekRevenue > 0 ? ((revenue - lastWeekRevenue) / lastWeekRevenue * 100) : 0;
+        const avgOrderValue = orders.length ? revenue / orders.length : 0;
+        const newCustomers = orders.filter(o => o.customer && o.customer.orders_count === 1).length;
+
+        const allVariants = products.flatMap(p => p.variants || []);
+        const outOfStock = allVariants.filter(v => (v.inventory_quantity || 0) === 0).length;
+
+        const productSales = {};
+        orders.forEach(order => {
+          (order.line_items || []).forEach(item => {
+            if (!productSales[item.title]) productSales[item.title] = { name: item.title, revenue: 0 };
+            productSales[item.title].revenue += parseFloat(item.price) * item.quantity;
+          });
+        });
+        const topProducts = Object.values(productSales).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+
+        await sendWeeklyDigestEmail(user.email, user.company_name, user.store_origin, {
+          revenue, revenueChange, orders: orders.length,
+          avgOrderValue, newCustomers, outOfStock, topProducts
+        });
+
+        sent++;
+      } catch (err) {
+        console.error(`Weekly digest error for user ${user.id}:`, err);
+      }
+    }
+
+    return res.json({ success: true, message: `Sent ${sent} weekly digests` });
+  } catch (err) {
+    console.error("Weekly digest job error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
