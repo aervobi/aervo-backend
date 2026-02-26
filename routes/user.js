@@ -267,6 +267,53 @@ module.exports = (pool, authenticateToken) => {
       return res.status(500).json({ success: false, error: "Failed to delete account." });
     }
   });
+// ── GET /api/user/notifications ──────────────────────────────
+  router.get("/api/user/notifications", authenticateToken, async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM notification_preferences WHERE user_id = $1`,
+        [req.user.userId]
+      );
 
+      if (result.rows.length === 0) {
+        // Create defaults for this user
+        const inserted = await pool.query(
+          `INSERT INTO notification_preferences (user_id) VALUES ($1) RETURNING *`,
+          [req.user.userId]
+        );
+        return res.json({ success: true, preferences: inserted.rows[0] });
+      }
+
+      return res.json({ success: true, preferences: result.rows[0] });
+    } catch (err) {
+      console.error("Get notifications error:", err);
+      return res.status(500).json({ success: false, error: "Failed to fetch notification preferences." });
+    }
+  });
+
+  // ── POST /api/user/notifications ─────────────────────────────
+  router.post("/api/user/notifications", authenticateToken, async (req, res) => {
+    try {
+      const { weekly_digest, revenue_alerts, inventory_alerts, product_updates } = req.body;
+
+      const result = await pool.query(
+        `INSERT INTO notification_preferences (user_id, weekly_digest, revenue_alerts, inventory_alerts, product_updates)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE SET
+           weekly_digest = $2,
+           revenue_alerts = $3,
+           inventory_alerts = $4,
+           product_updates = $5,
+           updated_at = NOW()
+         RETURNING *`,
+        [req.user.userId, weekly_digest, revenue_alerts, inventory_alerts, product_updates]
+      );
+
+      return res.json({ success: true, preferences: result.rows[0] });
+    } catch (err) {
+      console.error("Save notifications error:", err);
+      return res.status(500).json({ success: false, error: "Failed to save notification preferences." });
+    }
+  });
   return router;
 };
