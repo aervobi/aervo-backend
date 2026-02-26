@@ -139,6 +139,9 @@ app.use('/', googleRoutes);
 const onboardingRoutes = require('./routes/onboarding');
 app.use('/', onboardingRoutes);
 
+const userRoutes = require('./routes/user')(pool, authenticateToken);
+app.use('/', userRoutes);
+
 
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
@@ -322,75 +325,7 @@ app.delete("/api/integrations/disconnect/:storeId", authenticateToken, async (re
 // ============= UPDATE /api/user/me TO RETURN ACTIVE STORE =============
 // Replace your existing /api/user/me with this version:
 
-app.get("/api/user/me", authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, email, company_name, role, email_verified, created_at, last_login
-       FROM users WHERE id = $1`,
-      [req.user.userId]
-    );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    const user = result.rows[0];
-
-    // Get user's active store from new connected_stores table
-    const storeResult = await pool.query(
-      `SELECT id, integration_name, store_name, store_origin, connected_at 
-       FROM connected_stores 
-       WHERE user_id = $1 AND is_active = true 
-       LIMIT 1`,
-      [req.user.userId]
-    );
-
-    // If no active store, get the most recent one
-    let activeStore = null;
-    if (storeResult.rows.length === 0) {
-      const anyStore = await pool.query(
-        `SELECT id, integration_name, store_name, store_origin, connected_at 
-         FROM connected_stores 
-         WHERE user_id = $1 
-         ORDER BY connected_at DESC 
-         LIMIT 1`,
-        [req.user.userId]
-      );
-      if (anyStore.rows.length > 0) {
-        activeStore = anyStore.rows[0];
-        // Set it as active
-        await pool.query(
-          `UPDATE connected_stores SET is_active = true WHERE id = $1`,
-          [activeStore.id]
-        );
-      }
-    } else {
-      activeStore = storeResult.rows[0];
-    }
-
-    return res.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        companyName: user.company_name,
-        role: user.role,
-        emailVerified: user.email_verified,
-        createdAt: user.created_at,
-        lastLogin: user.last_login,
-      },
-      shop: activeStore ? {
-        shopOrigin: activeStore.store_origin,
-        installedAt: activeStore.connected_at,
-        storeName: activeStore.store_name,
-        integration: activeStore.integration_name
-      } : null,
-    });
-  } catch (err) {
-    console.error("Get user error:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch user data" });
-  }
-});
 
 // ============= SHOPIFY OVERVIEW =============
 app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
