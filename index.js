@@ -1532,7 +1532,12 @@ app.post("/api/admin/run-weekly-digest", async (req, res) => {
 
     for (const user of users.rows) {
       try {
-        const accessToken = await getShopToken(user.store_origin, user.id);
+        const shopResult = await pool.query(
+  `SELECT access_token FROM shops WHERE shop_origin = $1 AND (user_id = $2 OR user_id IS NULL)`,
+  [user.store_origin, user.id]
+);
+if (shopResult.rows.length === 0) continue;
+const accessToken = shopResult.rows[0].access_token;
         const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
         const base = `https://${user.store_origin}/admin/api/${apiVersion}`;
         const h = { "X-Shopify-Access-Token": accessToken };
