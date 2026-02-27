@@ -35,7 +35,7 @@ module.exports = (pool, authenticateToken) => {
     try {
       const result = await pool.query(
         `SELECT id, email, company_name, name, role, email_verified,
-                avatar_url, business_type, location, google_id,
+                avatar_url, business_type, location, google_id, company_logo_url,
                 CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN true ELSE false END AS has_password,
                 created_at, last_login, onboarded, platform
          FROM users WHERE id = $1`,
@@ -92,6 +92,7 @@ module.exports = (pool, authenticateToken) => {
           hasPassword:   user.has_password,
           onboarded:     user.onboarded,
           platform:      user.platform,
+          companyLogoUrl: user.company_logo_url
           createdAt:     user.created_at,
           lastLogin:     user.last_login,
         },
@@ -315,5 +316,29 @@ module.exports = (pool, authenticateToken) => {
       return res.status(500).json({ success: false, error: "Failed to save notification preferences." });
     }
   });
+  // ── POST /api/user/company-logo ───────────────────────────────
+const logoStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "aervo/logos",
+    allowed_formats: ["jpg", "jpeg", "png", "webp", "svg"],
+    transformation: [{ width: 200, height: 200, crop: "fit" }],
+    public_id: (req) => `company_${req.user.userId}_${Date.now()}`,
+  },
+});
+
+const logoUpload = multer({ storage: logoStorage, limits: { fileSize: 5 * 1024 * 1024 } });
+
+router.post("/api/user/company-logo", authenticateToken, logoUpload.single("logo"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
+    const logoUrl = req.file.path;
+    await pool.query("UPDATE users SET company_logo_url = $1 WHERE id = $2", [logoUrl, req.user.userId]);
+    return res.json({ success: true, logoUrl });
+  } catch (err) {
+    console.error("Logo upload error:", err);
+    return res.status(500).json({ success: false, error: "Failed to upload logo." });
+  }
+});
   return router;
 };
