@@ -49,7 +49,7 @@ async function safeSend({ to, subject, html, text }) {
 
 function buildWelcomeEmail({ companyName }) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
+  const wordmarkUrl = "https://aervoapp.com/assets/images/aervo-wordmark.png";
   const year = new Date().getFullYear();
 
   const html = `
@@ -213,7 +213,7 @@ function buildVerifyEmail({ toEmail, token }) {
         ">
           <tr>
             <td align="center" style="padding:26px 32px 6px; background:#020617;">
-              <img src="https://aervoapp.com/assets/aervo-wordmark.png" alt="Aervo" width="220"
+              <img src="https://aervoapp.com/assets/images/aervo-wordmark.png" alt="Aervo" width="220"
                 style="display:block; margin:0 auto; max-width:220px; height:auto;" />
             </td>
           </tr>
@@ -389,7 +389,7 @@ async function sendPasswordResetEmail({ toEmail, companyName, token }) {
 // ============= SEND ALERT EMAIL (DARK THEME MATCHING WELCOME EMAIL) =============
 async function sendAlertEmail(toEmail, companyName, storeName, alerts, dailyData) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
+  const wordmarkUrl = "https://aervoapp.com/assets/images/aervo-wordmark.png";
   const year = new Date().getFullYear();
   
   const severityConfig = {
@@ -580,7 +580,7 @@ View dashboard: ${appUrl}/dashboard.html
 }
 async function sendWeeklyDigestEmail(toEmail, companyName, storeName, weeklyData) {
   const appUrl = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
-  const wordmarkUrl = "https://aervoapp.com/assets/aervo-wordmark.png";
+  const wordmarkUrl = "https://aervoapp.com/assets/images/aervo-wordmark.png";
   const year = new Date().getFullYear();
 
   const topProductsHtml = (weeklyData.topProducts || []).slice(0, 5).map((p, i) => `
