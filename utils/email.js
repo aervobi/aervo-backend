@@ -573,7 +573,7 @@ View dashboard: ${appUrl}/dashboard.html
 
   return safeSend({
     to: toEmail,
-    subject: `${alerts.length > 0 ? `🔔 ${companyName}'s Aervo Alerts` : `📊 ${companyName}'s Aervo Daily Digest`}`,
+   subject: `${alerts.length > 0 ? `🔔 ${companyName}'s Alerts` : `📊 ${companyName}'s Daily Digest`}`,
     html,
     text
   });
@@ -734,7 +734,7 @@ View dashboard: ${appUrl}/dashboard
 
   return safeSend({
     to: toEmail,
-    subject: `📋 ${companyName}'s Aervo Weekly Digest`,
+    subject: `📋 ${companyName}'s Weekly Digest`,
     html,
     text
   });
