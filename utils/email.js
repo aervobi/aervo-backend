@@ -1,20 +1,20 @@
-// utils/email.js
-const sgMail = require("@sendgrid/mail");
 
-let SENDGRID_READY = false;
+// utils/email.js
+const { Resend } = require("resend");
+
+let resend = null;
 
 function initSendgrid() {
-  if (!process.env.SENDGRID_API_KEY) {
-    console.warn("SENDGRID_API_KEY is missing.");
-    SENDGRID_READY = false;
+  if (!process.env.RESEND_API_KEY) {
+    console.warn("RESEND_API_KEY is missing.");
     return;
   }
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  SENDGRID_READY = true;
+  resend = new Resend(process.env.RESEND_API_KEY);
+  console.log("✅ Resend initialized");
 }
 
 function getFromEmail() {
-  return process.env.SENDGRID_FROM_EMAIL;
+  return process.env.RESEND_FROM_EMAIL || "noreply@aervoapp.com";
 }
 
 function stripHtml(html) {
@@ -34,17 +34,11 @@ function stripHtml(html) {
 async function safeSend({ to, subject, html, text }) {
   const from = getFromEmail();
 
-  if (!SENDGRID_READY) {
-    throw new Error(
-      "SendGrid is not initialized. Call initSendgrid() at startup."
-    );
+  if (!resend) {
+    throw new Error("Resend is not initialized. Call initSendgrid() at startup.");
   }
 
-  if (!from) {
-    throw new Error("SENDGRID_FROM_EMAIL is missing.");
-  }
-
-  return sgMail.send({
+  return resend.emails.send({
     to,
     from,
     subject,
