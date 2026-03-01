@@ -143,6 +143,9 @@ app.use('/', userRoutes);
 //Reports routes
 const reportsRoutes = require('./routes/reports')(pool, authenticateToken);
 app.use('/', reportsRoutes);
+// CSV upload routes
+const csvUploadRoutes = require('./routes/csvUpload')(pool, authenticateToken);
+app.use('/', csvUploadRoutes);
 
 
 // ============= HEALTH CHECK =============
