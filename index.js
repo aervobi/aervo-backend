@@ -140,6 +140,9 @@ app.use('/', onboardingRoutes);
 
 const userRoutes = require('./routes/user')(pool, authenticateToken);
 app.use('/', userRoutes);
+//Reports routes
+const reportsRoutes = require('./routes/reports')(pool, authenticateToken);
+app.use('/', reportsRoutes);
 
 
 // ============= HEALTH CHECK =============
