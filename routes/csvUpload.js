@@ -242,6 +242,137 @@ Compute the metrics from the actual data. For example if there's a revenue colum
       return res.status(500).json({ success: false, message: err.message });
     }
   });
+  // ── POST /api/reports/csv/:id/ask ────────────────────────────
+  router.post("/api/reports/csv/:id/ask", authenticateToken, async (req, res) => {
+    try {
+      const { question } = req.body;
+      const uploadId = req.params.id;
+
+      if (!question || question.trim().length === 0) {
+        return res.status(400).json({ success: false, message: "Question is required" });
+      }
+
+      // Verify upload belongs to user
+      const uploadResult = await pool.query(
+        `SELECT * FROM csv_uploads WHERE id = $1 AND user_id = $2`,
+        [uploadId, req.user.userId]
+      );
+
+      if (uploadResult.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Upload not found" });
+      }
+
+      const upload = uploadResult.rows[0];
+
+      // Check question limit (10 per upload)
+      const questionCount = await pool.query(
+        `SELECT COUNT(*) as count FROM csv_questions 
+         WHERE upload_id = $1 AND user_id = $2`,
+        [uploadId, req.user.userId]
+      );
+
+      const used = parseInt(questionCount.rows[0].count);
+      const limit = 10;
+
+      if (used >= limit) {
+        return res.status(403).json({
+          success: false,
+          message: `You've reached the ${limit} question limit for this upload.`,
+          limitReached: true
+        });
+      }
+
+      // Get previous questions for context
+      const prevQuestions = await pool.query(
+        `SELECT question, answer FROM csv_questions 
+         WHERE upload_id = $1 AND user_id = $2
+         ORDER BY created_at ASC`,
+        [uploadId, req.user.userId]
+      );
+
+      // Build conversation history
+      const messages = [];
+
+      // Add previous Q&A as conversation history
+      prevQuestions.rows.forEach(q => {
+        messages.push({ role: "user", content: q.question });
+        messages.push({ role: "assistant", content: q.answer });
+      });
+
+      // Add current question
+      messages.push({ role: "user", content: question });
+
+      // Get report data for context
+      const reportData = upload.report_data;
+      const tablePreview = reportData.tableRows ? 
+        reportData.headers.join(", ") + "\n" + 
+        reportData.tableRows.slice(0, 50).map(r => r.join(", ")).join("\n") 
+        : "";
+
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const response = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        system: `You are Aervo, an expert business analyst. The user has uploaded a CSV file called "${upload.filename}" with ${upload.row_count} rows of data.
+
+Here is the data context:
+${tablePreview}
+
+AI Summary previously generated: ${upload.ai_insights}
+
+Answer the user's questions about this specific data. Be specific, reference actual numbers from the data, and be conversational. Keep answers concise — 2-4 sentences max unless a longer answer is truly needed. Never make up data that isn't in the file.`,
+        messages
+      });
+
+      const answer = response.content[0]?.text || "I couldn't generate an answer. Please try again.";
+
+      // Save question and answer
+      await pool.query(
+        `INSERT INTO csv_questions (user_id, upload_id, question, answer)
+         VALUES ($1, $2, $3, $4)`,
+        [req.user.userId, uploadId, question.trim(), answer]
+      );
+
+      return res.json({
+        success: true,
+        answer,
+        used: used + 1,
+        limit
+      });
+
+    } catch (err) {
+      console.error("CSV question error:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // ── GET /api/reports/csv/:id/questions ───────────────────────
+  router.get("/api/reports/csv/:id/questions", authenticateToken, async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT question, answer, created_at FROM csv_questions
+         WHERE upload_id = $1 AND user_id = $2
+         ORDER BY created_at ASC`,
+        [req.params.id, req.user.userId]
+      );
+
+      const countResult = await pool.query(
+        `SELECT COUNT(*) as count FROM csv_questions
+         WHERE upload_id = $1 AND user_id = $2`,
+        [req.params.id, req.user.userId]
+      );
+
+      return res.json({
+        success: true,
+        questions: result.rows,
+        used: parseInt(countResult.rows[0].count),
+        limit: 10
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
 
   return router;
 };
