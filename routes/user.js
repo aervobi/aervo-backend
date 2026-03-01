@@ -77,37 +77,39 @@ module.exports = (pool, authenticateToken) => {
       }
 
       return res.json({
-        success: true,
-        user: {
-          id:            user.id,
-          email:         user.email,
-          name:          user.name || user.company_name || "",
-          companyName:   user.company_name,
-          role:          user.role,
-          emailVerified: user.email_verified,
-          avatarUrl:     user.avatar_url,
-          businessType:  user.business_type,
-          location:      user.location,
-          googleId:      user.google_id,
-          hasPassword:   user.has_password,
-          onboarded:     user.onboarded,
-          platform:      user.platform,
-          companyLogoUrl: user.company_logo_url
-          createdAt:     user.created_at,
-          lastLogin:     user.last_login,
-        },
-        shop: activeStore ? {
-          shopOrigin:   activeStore.store_origin,
-          installedAt:  activeStore.connected_at,
-          storeName:    activeStore.store_name,
-          integration:  activeStore.integration_name,
-        } : null,
+  success: true,
+  user: {
+    id:             user.id,
+    email:          user.email,
+    name:           user.name || user.company_name || "",
+    companyName:    user.company_name,
+    role:           user.role,
+    emailVerified:  user.email_verified,
+    avatarUrl:      user.avatar_url,
+    businessType:   user.business_type,
+    location:       user.location,
+    googleId:       user.google_id,
+    hasPassword:    user.has_password,
+    onboarded:      user.onboarded,
+    platform:       user.platform,
+    companyLogoUrl: user.company_logo_url,
+    createdAt:      user.created_at,
+    lastLogin:      user.last_login,
+  },
+  shop: activeStore ? {
+    shopOrigin:  activeStore.store_origin,
+    installedAt: activeStore.connected_at,
+    storeName:   activeStore.store_name,
+    integration: activeStore.integration_name,
+ } : null,
       });
     } catch (err) {
       console.error("Get user error:", err);
       return res.status(500).json({ success: false, message: "Failed to fetch user data" });
     }
   });
+
+  // ── POST /api/user/update ─────────────────────────────────────
 
   // ── POST /api/user/update ─────────────────────────────────────
   router.post("/api/user/update", authenticateToken, async (req, res) => {
