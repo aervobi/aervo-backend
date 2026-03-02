@@ -81,6 +81,7 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
       const locRes = await fetch(`https://connect.squareup.com/v2/locations`, { headers: sqHeaders });
       const locData = await locRes.json();
       const locationIds = (locData.locations || []).map(l => l.id);
+      console.log('Square locations:', JSON.stringify(locData));
 
       if (locationIds.length === 0) {
         return res.status(400).json({ success: false, message: "No Square locations found" });
@@ -102,8 +103,13 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
           body: JSON.stringify({ location_ids: locationIds, query: { filter: { date_time_filter: { created_at: { start_at: sixtyDaysAgo, end_at: thirtyDaysAgo } } } }, limit: 500 })
         })
       ]);
+      
 
       const [currentData, prevData] = await Promise.all([currentRes.json(), prevRes.json()]);
+
+      
+
+
 
       // Normalize Square orders to match expected shape
       currentOrders = (currentData.orders || []).map(o => ({
