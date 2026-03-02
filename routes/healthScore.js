@@ -64,7 +64,7 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
       products = invData.products || [];
 
     } else if (merchantId) {
-      // ── SQUARE ───────────────────────────────────────────────
+    // ── SQUARE ───────────────────────────────────────────────
       platform = "square";
       const storeResult = await pool.query(
         `SELECT access_token FROM connected_stores 
@@ -75,21 +75,31 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
         return res.status(404).json({ success: false, message: "Square store not found" });
       }
       const accessToken = storeResult.rows[0].access_token;
+      const sqHeaders = { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" };
+
+      // Get real Square location IDs
+      const locRes = await fetch(`https://connect.squareup.com/v2/locations`, { headers: sqHeaders });
+      const locData = await locRes.json();
+      const locationIds = (locData.locations || []).map(l => l.id);
+
+      if (locationIds.length === 0) {
+        return res.status(400).json({ success: false, message: "No Square locations found" });
+      }
+
       const now = new Date();
       const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
       const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
-      const sqHeaders = { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" };
 
       const [currentRes, prevRes] = await Promise.all([
         fetch(`https://connect.squareup.com/v2/orders/search`, {
           method: "POST",
           headers: sqHeaders,
-          body: JSON.stringify({ location_ids: [merchantId], query: { filter: { date_time_filter: { created_at: { start_at: thirtyDaysAgo } } } }, limit: 500 })
+          body: JSON.stringify({ location_ids: locationIds, query: { filter: { date_time_filter: { created_at: { start_at: thirtyDaysAgo } } } }, limit: 500 })
         }),
         fetch(`https://connect.squareup.com/v2/orders/search`, {
           method: "POST",
           headers: sqHeaders,
-          body: JSON.stringify({ location_ids: [merchantId], query: { filter: { date_time_filter: { created_at: { start_at: sixtyDaysAgo, end_at: thirtyDaysAgo } } } }, limit: 500 })
+          body: JSON.stringify({ location_ids: locationIds, query: { filter: { date_time_filter: { created_at: { start_at: sixtyDaysAgo, end_at: thirtyDaysAgo } } } }, limit: 500 })
         })
       ]);
 
