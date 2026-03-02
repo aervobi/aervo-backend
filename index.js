@@ -2,6 +2,7 @@ require("dotenv").config();
 require("./utils/shopify");
 const { createVerifyToken } = require("./utils/emailVerify");
 console.log("APP_URL =", process.env.APP_URL);
+const path = require('path');
 
 const express = require("express");
 const cors = require("cors");
@@ -149,6 +150,13 @@ app.use('/', csvUploadRoutes);
 // Health score routes
 const healthScoreRoutes = require('./routes/healthScore')(pool, authenticateToken);
 app.use('/', healthScoreRoutes);
+//Sticky Features routes
+const stickyRoutes = require('./routes/stickyFeatures')(pool, authenticateToken);
+app.use('/', stickyRoutes);
+//Integllience Center
+app.get('/intelligence', (req, res) => {
+  res.sendFile(path.join(__dirname, '../aervo/intelligence.html'));
+});
 
 
 // ============= HEALTH CHECK =============
