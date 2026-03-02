@@ -146,6 +146,9 @@ app.use('/', reportsRoutes);
 // CSV upload routes
 const csvUploadRoutes = require('./routes/csvUpload')(pool, authenticateToken);
 app.use('/', csvUploadRoutes);
+// Health score routes
+const healthScoreRoutes = require('./routes/healthScore')(pool, authenticateToken);
+app.use('/', healthScoreRoutes);
 
 
 // ============= HEALTH CHECK =============
