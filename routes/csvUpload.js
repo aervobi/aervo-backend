@@ -373,6 +373,339 @@ Answer the user's questions about this specific data. Be specific, reference act
       return res.status(500).json({ success: false, message: err.message });
     }
   });
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THESE 3 ROUTES TO csvUpload.js
+// Paste them just before the final:  return router;
+// ─────────────────────────────────────────────────────────────────────────────
 
+// ── GET /api/csv/latest ───────────────────────────────────────────────────────
+// Returns the most recent upload's dashboard summary (called on CSV dashboard load)
+router.get("/api/csv/latest", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, filename, row_count, detected_columns, report_data, ai_insights, created_at
+       FROM csv_uploads WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ success: true, summary: null, uploadId: null });
+    }
+
+    const upload = result.rows[0];
+    const reportData = upload.report_data || {};
+    const summary = buildDashboardSummary(reportData, upload);
+
+    return res.json({ success: true, summary, uploadId: upload.id });
+  } catch (err) {
+    console.error("CSV latest error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/csv/upload ──────────────────────────────────────────────────────
+// Dashboard-facing upload endpoint — same processing as /api/reports/upload-csv
+// but returns a summary object shaped for the CSV dashboard
+router.post("/api/csv/upload", authenticateToken, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    // Check usage limit
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const usageResult = await pool.query(
+      `SELECT COUNT(*) as count FROM csv_uploads WHERE user_id = $1 AND created_at >= $2`,
+      [req.user.userId, startOfMonth.toISOString()]
+    );
+    const used = parseInt(usageResult.rows[0].count);
+    const userResult = await pool.query(`SELECT plan FROM users WHERE id = $1`, [req.user.userId]);
+    const plan = userResult.rows[0]?.plan || "free";
+    const limit = plan === "pro" ? 10 : 3; // CSV-only users get 3/month
+
+    if (used >= limit) {
+      return res.status(403).json({
+        success: false,
+        message: `You've used all ${limit} uploads for this month.`,
+        upgradeRequired: plan === "free"
+      });
+    }
+
+    // Parse file
+    let rows = [];
+    const filename = req.file.originalname;
+
+    if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
+      const XLSX = require("xlsx");
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    } else {
+      const { parse } = require("csv-parse/sync");
+      const content = req.file.buffer.toString("utf-8");
+      rows = parse(content, { columns: true, skip_empty_lines: true, trim: true });
+    }
+
+    if (rows.length === 0) {
+      return res.status(400).json({ success: false, message: "File appears to be empty" });
+    }
+
+    const headers = Object.keys(rows[0]);
+    const sampleRows = rows.slice(0, 5);
+
+    // AI analysis to detect column mapping and generate insights
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const analysisPrompt = `You are analyzing a business sales/orders CSV file. Headers: ${JSON.stringify(headers)}
+First 5 rows: ${JSON.stringify(sampleRows)}
+Total rows: ${rows.length}
+
+Respond ONLY with a JSON object, no markdown:
+{
+  "detectedType": "sales|inventory|customers|appointments|other",
+  "columns": {
+    "date": "exact column name or null",
+    "revenue": "exact column name or null",
+    "orders": "exact column name or null",
+    "quantity": "exact column name or null",
+    "customer": "exact column name or null",
+    "product": "exact column name or null",
+    "status": "exact column name or null"
+  },
+  "summary": "2-3 sentence description of this data",
+  "insights": "4-5 sentence actionable business insight based on visible data patterns"
+}`;
+
+    let analysisResult = null;
+    try {
+      const aiResponse = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 800,
+        messages: [{ role: "user", content: analysisPrompt }]
+      });
+      const raw = aiResponse.content[0]?.text || "{}";
+      analysisResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch (e) {
+      analysisResult = { detectedType: "other", columns: {}, summary: "Data uploaded.", insights: "Your data has been processed." };
+    }
+
+    const colMap = analysisResult.columns || {};
+
+    // ── Compute dashboard metrics from the raw rows ──────────────────────────
+    let totalRevenue = 0;
+    let totalOrders = rows.length;
+    const customerSet = new Set();
+    const productSales = {};
+    const dailyMap = {};
+
+    rows.forEach(row => {
+      // Revenue
+      const revCol = colMap.revenue;
+      if (revCol && row[revCol]) {
+        const val = parseFloat(String(row[revCol]).replace(/[$,]/g, ""));
+        if (!isNaN(val)) totalRevenue += val;
+      }
+
+      // Unique customers
+      const custCol = colMap.customer;
+      if (custCol && row[custCol]) customerSet.add(String(row[custCol]).trim());
+
+      // Top products
+      const prodCol = colMap.product;
+      const qtyCol = colMap.quantity;
+      if (prodCol && row[prodCol]) {
+        const name = String(row[prodCol]).trim();
+        if (!productSales[name]) productSales[name] = { name, revenue: 0, units: 0 };
+        const revVal = revCol ? parseFloat(String(row[revCol]).replace(/[$,]/g, "")) || 0 : 0;
+        const qtyVal = qtyCol ? parseInt(row[qtyCol]) || 1 : 1;
+        productSales[name].revenue += revVal;
+        productSales[name].units += qtyVal;
+      }
+
+      // Revenue by date
+      const dateCol = colMap.date;
+      if (dateCol && row[dateCol]) {
+        const raw = String(row[dateCol]).trim();
+        // Try to parse to YYYY-MM-DD
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+          const key = d.toISOString().split("T")[0];
+          if (!dailyMap[key]) dailyMap[key] = { date: key, revenue: 0, orders: 0 };
+          const revVal = revCol ? parseFloat(String(row[revCol]).replace(/[$,]/g, "")) || 0 : 0;
+          dailyMap[key].revenue += revVal;
+          dailyMap[key].orders += 1;
+        }
+      }
+    });
+
+    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    const topProducts = Object.values(productSales)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    const revenueByDate = Object.values(dailyMap)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map(d => ({
+        date: new Date(d.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        revenue: parseFloat(d.revenue.toFixed(2)),
+        orders: d.orders
+      }));
+
+    const summary = {
+      totalRevenue,
+      totalOrders,
+      avgOrderValue,
+      uniqueCustomers: customerSet.size || null,
+      topProducts,
+      revenueByDate,
+      detectedType: analysisResult.detectedType,
+      insights: analysisResult.insights
+    };
+
+    // Save to DB
+    const reportData = {
+      headers,
+      tableRows: rows.slice(0, 100).map(r => headers.map(h => r[h] ?? "")),
+      totalRows: rows.length,
+      metrics: [
+        { label: "Total Revenue", value: `$${totalRevenue.toFixed(2)}`, color: "cyan" },
+        { label: "Total Orders", value: totalOrders, color: "blue" },
+        { label: "Avg Order Value", value: `$${avgOrderValue.toFixed(2)}`, color: "purple" },
+        { label: "Unique Customers", value: customerSet.size || rows.length, color: "green" }
+      ],
+      summary: analysisResult.summary,
+      detectedType: analysisResult.detectedType,
+      detectedColumns: colMap,
+      dashboardSummary: summary  // Store the computed summary for /api/csv/latest
+    };
+
+    const saved = await pool.query(
+      `INSERT INTO csv_uploads (user_id, filename, row_count, detected_columns, report_data, ai_insights)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [req.user.userId, filename, rows.length, JSON.stringify(colMap), JSON.stringify(reportData), analysisResult.insights]
+    );
+
+    return res.json({
+      success: true,
+      uploadId: saved.rows[0].id,
+      summary,
+      aiInsights: analysisResult.insights,
+      used: used + 1,
+      limit
+    });
+
+  } catch (err) {
+    console.error("CSV dashboard upload error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/csv/chat ────────────────────────────────────────────────────────
+// AI chat for the CSV dashboard — aware of the uploaded data + user's goals
+router.post("/api/csv/chat", authenticateToken, async (req, res) => {
+  try {
+    const { message, uploadId } = req.body;
+    if (!message) return res.status(400).json({ success: false, message: "Message required" });
+
+    // Get upload data
+    let uploadContext = "";
+    if (uploadId) {
+      const uploadResult = await pool.query(
+        `SELECT * FROM csv_uploads WHERE id = $1 AND user_id = $2`,
+        [uploadId, req.user.userId]
+      );
+      if (uploadResult.rows.length > 0) {
+        const upload = uploadResult.rows[0];
+        const rd = upload.report_data || {};
+        const ds = rd.dashboardSummary || {};
+        uploadContext = `
+FILE: ${upload.filename} (${upload.row_count} rows)
+TOTAL REVENUE: $${(ds.totalRevenue || 0).toFixed(2)}
+TOTAL ORDERS: ${ds.totalOrders || 0}
+AVG ORDER VALUE: $${(ds.avgOrderValue || 0).toFixed(2)}
+UNIQUE CUSTOMERS: ${ds.uniqueCustomers || "unknown"}
+TOP PRODUCTS: ${(ds.topProducts || []).slice(0, 5).map(p => `${p.name} ($${p.revenue.toFixed(2)})`).join(", ")}
+AI INSIGHTS: ${upload.ai_insights || ""}
+DATA PREVIEW: ${(rd.headers || []).join(", ")}
+${(rd.tableRows || []).slice(0, 20).map(r => r.join(", ")).join("\n")}`.trim();
+      }
+    }
+
+    // Get user's goals for context
+    let goalsContext = "";
+    try {
+      const goalsResult = await pool.query(
+        `SELECT name, target_value, current_value, metric_type FROM goals WHERE user_id = $1`,
+        [req.user.userId]
+      );
+      if (goalsResult.rows.length > 0) {
+        goalsContext = "\nUSER GOALS:\n" + goalsResult.rows.map(g =>
+          `- ${g.name}: ${g.current_value} / ${g.target_value} (${g.metric_type})`
+        ).join("\n");
+      }
+    } catch (e) {}
+
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 600,
+      system: `You are Aervo, an expert AI business analyst. The user has uploaded their sales data as a CSV.
+Answer questions about their business using the data below. Be specific, reference real numbers, and give actionable advice.
+Keep responses concise — 2-4 sentences unless more detail is genuinely needed.
+
+${uploadContext}
+${goalsContext}`,
+      messages: [{ role: "user", content: message }]
+    });
+
+    // Save question for history
+    if (uploadId) {
+      await pool.query(
+        `INSERT INTO csv_questions (user_id, upload_id, question, answer) VALUES ($1, $2, $3, $4)`,
+        [req.user.userId, uploadId, message.trim(), response.content[0]?.text || ""]
+      ).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      reply: response.content[0]?.text || "Sorry, I couldn't generate a response."
+    });
+
+  } catch (err) {
+    console.error("CSV chat error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── Helper: build dashboard summary from stored report_data ──────────────────
+function buildDashboardSummary(reportData, upload) {
+  // If we stored a dashboardSummary directly, use it
+  if (reportData.dashboardSummary) return reportData.dashboardSummary;
+
+  // Otherwise reconstruct basic summary from whatever is stored
+  const metrics = reportData.metrics || [];
+  const revenueMetric = metrics.find(m => m.label?.toLowerCase().includes("revenue"));
+  const ordersMetric = metrics.find(m => m.label?.toLowerCase().includes("order"));
+
+  return {
+    totalRevenue: revenueMetric ? parseFloat(String(revenueMetric.value).replace(/[$,]/g, "")) || 0 : 0,
+    totalOrders: ordersMetric ? parseInt(ordersMetric.value) || 0 : upload.row_count || 0,
+    avgOrderValue: 0,
+    uniqueCustomers: null,
+    topProducts: [],
+    revenueByDate: [],
+    detectedType: reportData.detectedType || "other",
+    insights: upload.ai_insights || ""
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END OF PATCH — paste the above before:  return router;
+// ─────────────────────────────────────────────────────────────────────────────
   return router;
 };
