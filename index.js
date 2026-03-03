@@ -157,6 +157,34 @@ app.use('/', stickyRoutes);
 app.get('/intelligence', (req, res) => {
   res.sendFile(path.join(__dirname, '../aervo/intelligence.html'));
 });
+//csv routes
+app.get('/dashboard/csv', (req, res) => {
+  res.sendFile(path.join(__dirname, '../aervo/dashboard/csv/index.html'));
+});
+// ============================================================
+// UPDATE your /dashboard route to redirect based on platform
+// Replace your existing /dashboard route (or add if missing)
+// ============================================================
+
+app.get('/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT platform FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+    const platform = result.rows[0]?.platform;
+    if (platform === 'csv') {
+      return res.redirect('/dashboard/csv');
+    } else if (platform === 'square') {
+      return res.redirect('/dashboard/square');
+    } else {
+      return res.sendFile(path.join(__dirname, '../aervo/dashboard/shopify/index.html'));
+    }
+  } catch (err) {
+    return res.sendFile(path.join(__dirname, '../aervo/dashboard/shopify/index.html'));
+  }
+});
+
 
 
 // ============= HEALTH CHECK =============
