@@ -746,5 +746,31 @@ router.get("/api/csv/upload/:id", authenticateToken, async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
-return router;
+
+// ── GET /api/csv/narrative/:id ────────────────────────────────────
+router.get("/api/csv/narrative/:id", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM csv_uploads WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Upload not found" });
+    }
+    const upload = result.rows[0];
+    const rd = upload.report_data || {};
+    const summary = rd.dashboardSummary || {};
+
+    return res.json({
+      success: true,
+      narrative: upload.ai_insights || null,
+      anomalies: [],
+      projection: null
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+  return router;
 };
