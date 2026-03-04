@@ -1178,7 +1178,47 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
  */
 
 // ============= START SERVER =============
+// ============= REGISTER COMPLIANCE WEBHOOKS =============
+async function registerComplianceWebhooks(shop, accessToken) {
+  const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+  const webhooks = [
+    { topic: "customers/data_request", uri: "https://api.aervoapp.com/webhooks/shopify/customers_data_request" },
+    { topic: "customers/redact",       uri: "https://api.aervoapp.com/webhooks/shopify/customers_redact" },
+    { topic: "shop/redact",            uri: "https://api.aervoapp.com/webhooks/shopify/shop_redact" },
+  ];
+
+  for (const wh of webhooks) {
+    try {
+      await fetch(`https://${shop}/admin/api/${apiVersion}/webhooks.json`, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ webhook: { topic: wh.topic, address: wh.uri, format: "json" } }),
+      });
+      console.log(`✅ Registered webhook: ${wh.topic}`);
+    } catch (err) {
+      console.error(`❌ Failed to register webhook ${wh.topic}:`, err);
+    }
+  }
+}
+
+// Call this after OAuth completes for each shop
+async function registerWebhooksForAllShops() {
+  try {
+    const result = await pool.query("SELECT shop_origin, access_token FROM shops");
+    for (const row of result.rows) {
+      await registerComplianceWebhooks(row.shop_origin, row.access_token);
+    }
+  } catch (err) {
+    console.error("Failed to register webhooks for shops:", err);
+  }
+}
+
+// ============= START SERVER =============
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  registerWebhooksForAllShops();
 });
