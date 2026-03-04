@@ -1180,7 +1180,7 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
 // ============= START SERVER =============
 // ============= REGISTER COMPLIANCE WEBHOOKS =============
 async function registerComplianceWebhooks(shop, accessToken) {
-  const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+  const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
   const webhooks = [
     { topic: "customers/data_request", uri: "https://api.aervoapp.com/webhooks/shopify/customers_data_request" },
     { topic: "customers/redact",       uri: "https://api.aervoapp.com/webhooks/shopify/customers_redact" },
@@ -1189,7 +1189,7 @@ async function registerComplianceWebhooks(shop, accessToken) {
 
   for (const wh of webhooks) {
     try {
-      await fetch(`https://${shop}/admin/api/${apiVersion}/webhooks.json`, {
+      const response = await fetch(`https://${shop}/admin/api/${apiVersion}/webhooks.json`, {
         method: "POST",
         headers: {
           "X-Shopify-Access-Token": accessToken,
@@ -1197,7 +1197,8 @@ async function registerComplianceWebhooks(shop, accessToken) {
         },
         body: JSON.stringify({ webhook: { topic: wh.topic, address: wh.uri, format: "json" } }),
       });
-      console.log(`✅ Registered webhook: ${wh.topic}`);
+      const data = await response.json();
+      console.log(`Webhook ${wh.topic} response:`, JSON.stringify(data));
     } catch (err) {
       console.error(`❌ Failed to register webhook ${wh.topic}:`, err);
     }
