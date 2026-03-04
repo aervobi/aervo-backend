@@ -707,5 +707,44 @@ function buildDashboardSummary(reportData, upload) {
 // ─────────────────────────────────────────────────────────────────────────────
 // END OF PATCH — paste the above before:  return router;
 // ─────────────────────────────────────────────────────────────────────────────
-  return router;
+// ── GET /api/csv/uploads ─────────────────────────────────────────
+// Returns all uploads for the user (for history sidebar)
+router.get("/api/csv/uploads", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, filename, row_count, created_at,
+              report_data->>'period_label' as period_label
+       FROM csv_uploads 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 24`,
+      [req.user.userId]
+    );
+    return res.json({ success: true, uploads: result.rows });
+  } catch (err) {
+    console.error("CSV uploads list error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});  
+
+// ── GET /api/csv/upload/:id ──────────────────────────────────────
+// Returns a specific upload's dashboard summary
+router.get("/api/csv/upload/:id", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM csv_uploads WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Upload not found" });
+    }
+    const upload = result.rows[0];
+    const reportData = upload.report_data || {};
+    const summary = reportData.dashboardSummary || buildDashboardSummary(reportData, upload);
+    return res.json({ success: true, summary, uploadId: upload.id });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+return router;
 };
