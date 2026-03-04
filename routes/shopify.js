@@ -1,17 +1,111 @@
-// backend/routes/shopify.js
+// backend/routes/shopify.js  (UPDATED)
+// Registers Shopify mandatory compliance webhooks + app/uninstalled
+
 const express = require("express");
-const crypto  = require("crypto");
-const fetch   = require("node-fetch");
+const crypto = require("crypto");
+const fetch = require("node-fetch");
 
 module.exports = function (pool) {
   const router = express.Router();
 
-  const SHOPIFY_API_KEY    = process.env.SHOPIFY_API_KEY;
+  const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
   const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
-  const SHOPIFY_SCOPES     = process.env.SHOPIFY_SCOPES || "read_products,read_orders,read_customers,read_inventory";
-  const APP_URL            = process.env.APP_URL;
-  const FRONTEND_URL       = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+  const SHOPIFY_SCOPES =
+    process.env.SHOPIFY_SCOPES ||
+    "read_products,read_orders,read_customers,read_inventory";
+  const APP_URL = process.env.APP_URL; // must be https://...
+  const FRONTEND_URL = process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
+  const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || "2024-01";
 
+  if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET || !APP_URL) {
+    console.warn(
+      "⚠️ Missing one of SHOPIFY_API_KEY / SHOPIFY_API_SECRET / APP_URL in env."
+    );
+  }
+
+  function safeCompare(a, b) {
+    const aBuf = Buffer.from(String(a), "utf8");
+    const bBuf = Buffer.from(String(b), "utf8");
+    if (aBuf.length !== bBuf.length) return false;
+    return crypto.timingSafeEqual(aBuf, bBuf);
+  }
+
+  function verifyOAuthHmac(query) {
+    // Shopify OAuth callback HMAC is sha256 hex of sorted query string (excluding hmac)
+    const { hmac, ...rest } = query;
+
+    const message = Object.keys(rest)
+      .sort()
+      .map((key) => `${key}=${Array.isArray(rest[key]) ? rest[key].join(",") : rest[key]}`)
+      .join("&");
+
+    const digest = crypto
+      .createHmac("sha256", SHOPIFY_API_SECRET)
+      .update(message)
+      .digest("hex");
+
+    return safeCompare(digest, hmac);
+  }
+
+  async function registerWebhook(shop, accessToken, topic, address) {
+    const resp = await fetch(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          webhook: { topic, address, format: "json" },
+        }),
+      }
+    );
+
+    // Shopify returns 201 on success; 422 if already exists sometimes
+    const text = await resp.text();
+    if (!resp.ok) {
+      // Allow "already taken" style responses without failing install
+      // But log them so you can debug
+      console.warn(
+        `⚠️ Webhook register failed (${topic}) status=${resp.status} body=${text}`
+      );
+      return { ok: false, status: resp.status, body: text };
+    }
+
+    return { ok: true, status: resp.status, body: text };
+  }
+
+  async function registerRequiredWebhooks(shop, accessToken) {
+    const base = `${APP_URL}/webhooks/shopify`;
+
+    const hooks = [
+      {
+        topic: "customers/data_request",
+        address: `${base}/customers_data_request`,
+      },
+      {
+        topic: "customers/redact",
+        address: `${base}/customers_redact`,
+      },
+      {
+        topic: "shop/redact",
+        address: `${base}/shop_redact`,
+      },
+      {
+        topic: "app/uninstalled",
+        address: `${base}/app_uninstalled`,
+      },
+    ];
+
+    for (const h of hooks) {
+      await registerWebhook(shop, accessToken, h.topic, h.address);
+    }
+  }
+
+  // =========================
+  // Start OAuth / Install
+  // =========================
   router.get("/", async (req, res) => {
     try {
       const shop = String(req.query.shop || "").trim().toLowerCase();
@@ -28,8 +122,14 @@ module.exports = function (pool) {
         [shop, state]
       );
 
-      const redirectUri  = `${APP_URL}/auth/shopify/callback`;
-      const installUrl   = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+      const redirectUri = `${APP_URL}/auth/shopify/callback`;
+
+      const installUrl =
+        `https://${shop}/admin/oauth/authorize` +
+        `?client_id=${SHOPIFY_API_KEY}` +
+        `&scope=${encodeURIComponent(SHOPIFY_SCOPES)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&state=${state}`;
 
       return res.redirect(installUrl);
     } catch (err) {
@@ -38,33 +138,29 @@ module.exports = function (pool) {
     }
   });
 
+  // =========================
+  // OAuth Callback
+  // =========================
   router.get("/callback", async (req, res) => {
     try {
-      const { shop, code, state, hmac } = req.query;
+      const shop = String(req.query.shop || "").trim().toLowerCase();
+      const code = String(req.query.code || "").trim();
+      const state = String(req.query.state || "").trim();
+      const hmac = String(req.query.hmac || "").trim();
 
       if (!shop || !code || !state || !hmac) {
         return res.status(400).send("Missing required OAuth parameters.");
       }
 
       // Verify HMAC
-      const queryParams = Object.entries(req.query)
-        .filter(([key]) => key !== "hmac")
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join("&");
-
-      const expectedHmac = crypto
-        .createHmac("sha256", SHOPIFY_API_SECRET)
-        .update(queryParams)
-        .digest("hex");
-
-      if (expectedHmac !== hmac) {
+      const isValidHmac = verifyOAuthHmac(req.query);
+      if (!isValidHmac) {
         return res.status(401).send("Invalid HMAC.");
       }
 
       // Verify state
       const stateResult = await pool.query(
-        `SELECT * FROM shopify_oauth_states
+        `SELECT 1 FROM shopify_oauth_states
          WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
         [shop, state]
       );
@@ -73,29 +169,41 @@ module.exports = function (pool) {
         return res.status(400).send("Invalid or expired OAuth state.");
       }
 
+      // Consume state
       await pool.query(
         `DELETE FROM shopify_oauth_states WHERE shop_origin = $1 AND state = $2`,
         [shop, state]
       );
 
       // Exchange code for access token
-      const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id:     SHOPIFY_API_KEY,
-          client_secret: SHOPIFY_API_SECRET,
-          code,
-        }),
-      });
+      const tokenResponse = await fetch(
+        `https://${shop}/admin/oauth/access_token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: SHOPIFY_API_KEY,
+            client_secret: SHOPIFY_API_SECRET,
+            code,
+          }),
+        }
+      );
 
+      const tokenText = await tokenResponse.text();
       if (!tokenResponse.ok) {
+        console.error("Token exchange failed:", tokenResponse.status, tokenText);
         return res.status(500).send("Failed to exchange OAuth code.");
       }
 
-      const tokenData = await tokenResponse.json();
+      const tokenData = JSON.parse(tokenText);
       const { access_token, scope } = tokenData;
 
+      if (!access_token) {
+        console.error("Token exchange response missing access_token:", tokenData);
+        return res.status(500).send("OAuth token missing.");
+      }
+
+      // Save shop once
       await pool.query(
         `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at)
          VALUES ($1::text, $2::text, $3::text, $1::text, NOW())
@@ -104,29 +212,21 @@ module.exports = function (pool) {
            access_token = EXCLUDED.access_token,
            scope        = EXCLUDED.scope,
            installed_at = NOW()`,
-        [shop, access_token, scope]
+        [shop, access_token, scope || null]
       );
 
-  // Save to shops table
-      await pool.query(
-        `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at)
-         VALUES ($1::text, $2::text, $3::text, $1::text, NOW())
-         ON CONFLICT (shop_origin)
-         DO UPDATE SET
-           access_token = EXCLUDED.access_token,
-           scope        = EXCLUDED.scope,
-           installed_at = NOW()`,
-        [shop, access_token, scope]
+      // ✅ Register mandatory compliance webhooks + app/uninstalled
+      await registerRequiredWebhooks(shop, access_token);
+
+      console.log(`✅ Shop ${shop} connected + webhooks registered`);
+
+      // Redirect back to your UI
+      // (If embedded later, you’ll typically redirect to /dashboard?shop=...)
+      return res.redirect(
+        `${FRONTEND_URL}/dashboard.html?connected=1&shop=${encodeURIComponent(
+          shop
+        )}`
       );
-
-      console.log(`✅ Shop ${shop} connected successfully`);
-
-      return res.redirect(`${FRONTEND_URL}/dashboard.html?connected=1`);
-
-      console.log(`✅ Shop ${shop} connected successfully`);
-
-      return res.redirect(`${FRONTEND_URL}/dashboard.html?connected=1`);
-
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
