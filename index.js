@@ -26,10 +26,15 @@ const {
 // ============= EXPRESS + DB SETUP =============
 const app = express();
 app.set("trust proxy", 1);
-app.use(cors());
+app.use(cors({
+  origin: ['https://aervoapp.com', 'https://www.aervoapp.com'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Type'],
+}));
+app.options('*', cors());
 app.use(express.json());                          
 app.use(express.urlencoded({ extended: true }));
-
 
 
 app.use((req, res, next) => {
