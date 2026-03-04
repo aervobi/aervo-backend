@@ -505,7 +505,7 @@ app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop parameter required" });
 
     const accessToken = await getShopToken(shop, req.user.userId);
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
     const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
 
     const [ordersResp, productsResp, customersResp] = await Promise.all([
