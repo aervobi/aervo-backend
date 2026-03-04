@@ -1215,6 +1215,22 @@ async function registerWebhooksForAllShops() {
     console.error("Failed to register webhooks for shops:", err);
   }
 }
+app.get("/debug/webhooks", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT shop_origin, access_token FROM shops LIMIT 1");
+    const { shop_origin, access_token } = result.rows[0];
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
+    
+    const response = await fetch(`https://${shop_origin}/admin/api/${apiVersion}/webhooks.json`, {
+      headers: { "X-Shopify-Access-Token": access_token }
+    });
+    
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ============= START SERVER =============
 const PORT = process.env.PORT || 10000;
