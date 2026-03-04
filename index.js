@@ -1180,12 +1180,12 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
 // ============= START SERVER =============
 // ============= REGISTER COMPLIANCE WEBHOOKS =============
 async function registerComplianceWebhooks(shop, accessToken) {
-  const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+ const apiVersion = "2024-01";
   const webhooks = [
-    { topic: "customers/data_request", uri: "https://api.aervoapp.com/webhooks/shopify/customers_data_request" },
-    { topic: "customers/redact",       uri: "https://api.aervoapp.com/webhooks/shopify/customers_redact" },
-    { topic: "shop/redact",            uri: "https://api.aervoapp.com/webhooks/shopify/shop_redact" },
-  ];
+  { topic: "customers/data_request", uri: "https://api.aervoapp.com/webhooks/shopify/customers_data_request" },
+  { topic: "customers/redact",       uri: "https://api.aervoapp.com/webhooks/shopify/customers_redact" },
+  { topic: "shop/redact",            uri: "https://api.aervoapp.com/webhooks/shopify/shop_redact" },
+];
 
   for (const wh of webhooks) {
     try {
