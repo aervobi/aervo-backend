@@ -122,6 +122,10 @@ function authenticateToken(req, res, next) {
 function verifyShopifyWebhook(req, res, next) {
   try {
     const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
+    console.log("HMAC header:", hmacHeader);
+    console.log("Raw body:", req.rawBody);
+    console.log("API Secret exists:", !!process.env.SHOPIFY_API_SECRET);
+    
     if (!hmacHeader) return res.status(401).send("Missing HMAC header");
 
     const rawBody = req.rawBody || "";
@@ -137,7 +141,6 @@ function verifyShopifyWebhook(req, res, next) {
 
     if (!safeEqual) return res.status(401).send("Invalid HMAC");
 
-    // Optional parsed body for handlers
     try {
       req.webhookBody = rawBody ? JSON.parse(rawBody) : {};
     } catch {
@@ -147,7 +150,7 @@ function verifyShopifyWebhook(req, res, next) {
     next();
   } catch (err) {
     console.error("Webhook verify error:", err);
-    return res.status(500).send("Webhook verification error");
+    return res.status(401).send("Webhook verification error");
   }
 }
 
