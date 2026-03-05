@@ -102,6 +102,8 @@ const pool = new Pool({
   ssl: isHostedDb ? { rejectUnauthorized: false } : false,
 });
 
+app.locals.pool = pool;
+
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
 // ============= JWT MIDDLEWARE =============
@@ -777,6 +779,36 @@ app.get("/api/shopify/analytics", authenticateToken, async (req, res) => {
 // ============= AI CHAT =============
 app.post("/api/ai/chat", authenticateToken, async (req, res) => {
   try {
+    // Check plan limits for AI chat
+const userPlanResult = await pool.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
+const userPlan = userPlanResult.rows[0]?.plan || 'free';
+const PLANS = require('./config/plans');
+const limits = PLANS[userPlan];
+
+if (limits.aiMessagesPerMonth !== Infinity) {
+  // Count messages this month
+  const countResult = await pool.query(
+    `SELECT COUNT(*) FROM ai_chat_logs 
+     WHERE user_id = $1 AND created_at > date_trunc('month', NOW())`,
+    [req.user.userId]
+  );
+  const count = parseInt(countResult.rows[0].count);
+  
+  if (count >= limits.aiMessagesPerMonth) {
+    return res.status(403).json({
+      success: false,
+      code: 'PLAN_LIMIT',
+      message: `You've used all ${limits.aiMessagesPerMonth} AI messages for this month. Upgrade to Essential for unlimited messages.`,
+      currentPlan: userPlan,
+    });
+  }
+  
+  // Log this message
+  await pool.query(
+    `INSERT INTO ai_chat_logs (user_id, created_at) VALUES ($1, NOW())`,
+    [req.user.userId]
+  );
+}
     const { message, shopOrigin } = req.body;
     if (!message) return res.status(400).json({ success: false, message: "Message is required" });
     if (!shopOrigin)
