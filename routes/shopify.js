@@ -214,43 +214,16 @@ module.exports = function (pool) {
            installed_at = NOW()`,
         [shop, access_token, scope || null]
       );
+console.log(`✅ Shop ${shop} connected + webhooks registered`);
 
+// Debug
+console.log("Starting auto-login for shop:", shop);
+const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
+console.log("Shop email:", shopEmail);
       // ✅ Register mandatory compliance webhooks + app/uninstalled
       await registerRequiredWebhooks(shop, access_token);
 
-    console.log(`✅ Shop ${shop} connected + webhooks registered`);
-
-// Auto-login: find or create Aervo user for this shop
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
-
-let user;
-const existing = await pool.query("SELECT * FROM users WHERE email = $1", [shopEmail]);
-
-if (existing.rows.length > 0) {
-  user = existing.rows[0];
-} else {
-  const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-  const result = await pool.query(
-    `INSERT INTO users (email, password_hash, company_name, role, email_verified)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [shopEmail, passwordHash, shop, "Owner", true]
-  );
-  user = result.rows[0];
-}
-
-await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
-
-const token = jwt.sign(
-  { userId: user.id, email: user.email },
-  process.env.JWT_SECRET,
-  { expiresIn: "7d" }
-);
-
-return res.redirect(
-  `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
-);  
+      
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
