@@ -39,6 +39,14 @@ app.use(
 );
 app.options("*", cors());
 
+app.use((req, res, next) => {
+  const shop = req.query.shop;
+  if (shop) {
+    res.setHeader("Content-Security-Policy", `frame-ancestors https://${shop} https://admin.shopify.com;`);
+  }
+  next();
+});
+
 // ✅ IMPORTANT: Capture raw body for webhook endpoints BEFORE express.json
 app.use((req, res, next) => {
   const url = req.originalUrl || "";
