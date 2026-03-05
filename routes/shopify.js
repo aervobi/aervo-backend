@@ -214,16 +214,48 @@ module.exports = function (pool) {
            installed_at = NOW()`,
         [shop, access_token, scope || null]
       );
-console.log(`✅ Shop ${shop} connected + webhooks registered`);
-
-// Debug
-console.log("Starting auto-login for shop:", shop);
-const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
-console.log("Shop email:", shopEmail);
-      // ✅ Register mandatory compliance webhooks + app/uninstalled
+// ✅ Register mandatory compliance webhooks + app/uninstalled
       await registerRequiredWebhooks(shop, access_token);
 
-      
+      console.log(`✅ Shop ${shop} connected + webhooks registered`);
+
+      const bcrypt = require("bcryptjs");
+      const jwt = require("jsonwebtoken");
+      const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
+      console.log("Shop email:", shopEmail);
+
+      const existing = await pool.query("SELECT * FROM users WHERE email = $1", [shopEmail]);
+      console.log("Existing user found:", existing.rows.length);
+
+      let user;
+      if (existing.rows.length > 0) {
+        user = existing.rows[0];
+      } else {
+        console.log("Creating new user...");
+        const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+        const result = await pool.query(
+          `INSERT INTO users (email, password_hash, company_name, role, email_verified)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [shopEmail, passwordHash, shop, "Owner", true]
+        );
+        user = result.rows[0];
+        console.log("New user created:", user.id);
+      }
+
+      console.log("User ID:", user.id);
+      await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
+      console.log("Shop linked to user");
+
+      const token = jwt.sign(
+        { userId: user.id, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+      console.log("Token generated, redirecting...");
+
+      return res.redirect(
+        `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
+      );
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
