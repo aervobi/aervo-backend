@@ -242,9 +242,20 @@ module.exports = function (pool) {
         console.log("New user created:", user.id);
       }
 
-      console.log("User ID:", user.id);
-      await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
-      console.log("Shop linked to user");
+    console.log("User ID:", user.id);
+await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
+console.log("Shop linked to user");
+
+// Also insert into connected_stores so /api/user/me can find it
+await pool.query(
+  `INSERT INTO connected_stores (user_id, integration_name, store_id, store_name, store_origin, is_active, connected_at)
+   VALUES ($1, 'shopify', $2, $2, $2, true, NOW())
+   ON CONFLICT (user_id, store_origin) DO UPDATE SET
+     is_active = true,
+     store_name = EXCLUDED.store_name,
+     connected_at = NOW()`,
+  [user.id, shop]
+);
 
       const token = jwt.sign(
         { userId: user.id, email: user.email },
