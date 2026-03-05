@@ -223,10 +223,10 @@ module.exports = function (pool) {
       // Redirect back to your UI
       // (If embedded later, you’ll typically redirect to /dashboard?shop=...)
       return res.redirect(
-        `${FRONTEND_URL}/dashboard.html?connected=1&shop=${encodeURIComponent(
-          shop
-        )}`
-      );
+  `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(
+    shop
+  )}`
+);
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
