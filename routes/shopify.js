@@ -247,26 +247,34 @@ await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.i
 console.log("Shop linked to user");
 
 // Also insert into connected_stores so /api/user/me can find it
-await pool.query(
-  `INSERT INTO connected_stores (user_id, integration_name, store_id, store_name, store_origin, is_active, connected_at)
-   VALUES ($1, 'shopify', $2, $2, $2, true, NOW())
-   ON CONFLICT (user_id, store_origin) DO UPDATE SET
-     is_active = true,
-     store_name = EXCLUDED.store_name,
-     connected_at = NOW()`,
+const existingStore = await pool.query(
+  `SELECT id FROM connected_stores WHERE user_id = $1 AND store_origin = $2`,
   [user.id, shop]
 );
 
-      const token = jwt.sign(
-        { userId: user.id, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "7d" }
-      );
-      console.log("Token generated, redirecting...");
+if (existingStore.rows.length > 0) {
+  await pool.query(
+    `UPDATE connected_stores SET is_active = true, connected_at = NOW() WHERE user_id = $1 AND store_origin = $2`,
+    [user.id, shop]
+  );
+} else {
+  await pool.query(
+    `INSERT INTO connected_stores (user_id, integration_name, store_id, store_name, store_origin, is_active, connected_at)
+     VALUES ($1, 'shopify', $2, $2, $2, true, NOW())`,
+    [user.id, shop]
+  );
+}
 
-      return res.redirect(
-        `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
-      );
+const token = jwt.sign(
+  { userId: user.id, email: user.email },
+  process.env.JWT_SECRET,
+  { expiresIn: "7d" }
+);
+console.log("Token generated, redirecting...");
+
+return res.redirect(
+  `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
+);
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
