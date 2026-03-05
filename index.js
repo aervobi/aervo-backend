@@ -54,6 +54,8 @@ app.use((req, res, next) => {
   });
   req.on("end", () => {
     req.rawBody = rawBody;
+    // Prevent express.json() from trying to re-read the stream
+    req.headers["content-type"] = "text/plain";
     next();
   });
 });
