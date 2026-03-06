@@ -272,14 +272,133 @@ const token = jwt.sign(
 );
 console.log("Token generated, redirecting...");
 
-return res.redirect(
-  `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
-);
+return res.send(`
+  <html>
+    <script>
+      window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}';
+    </script>
+  </html>
+`);
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
     }
   });
 
+// ============= SHOPIFY BILLING =============
+const PLANS_CONFIG = {
+  essential: { name: "Aervo Essential", price: "19.00", trialDays: 0 },
+  pro: { name: "Aervo Pro", price: "49.00", trialDays: 14 },
+  business: { name: "Aervo Business", price: "99.00", trialDays: 0 },
+};
+
+// Create a charge for a plan
+router.post("/billing/create", async (req, res) => {
+  try {
+    const { shop, plan } = req.body;
+    if (!shop || !plan || !PLANS_CONFIG[plan]) {
+      return res.status(400).json({ success: false, message: "Invalid plan or shop" });
+    }
+
+    const shopResult = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not found" });
+    }
+
+    const accessToken = shopResult.rows[0].access_token;
+    const planConfig = PLANS_CONFIG[plan];
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+    const response = await fetch(
+      `https://${shop}/admin/api/${apiVersion}/recurring_application_charges.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recurring_application_charge: {
+            name: planConfig.name,
+            price: planConfig.price,
+            return_url: `${APP_URL}/auth/shopify/billing/callback?shop=${shop}&plan=${plan}`,
+            trial_days: planConfig.trialDays,
+            test: process.env.NODE_ENV !== "production", // test mode in dev
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const charge = data.recurring_application_charge;
+
+    if (!charge) {
+      return res.status(500).json({ success: false, message: "Failed to create charge" });
+    }
+
+    return res.json({ success: true, confirmationUrl: charge.confirmation_url });
+  } catch (err) {
+    console.error("Billing create error:", err);
+    return res.status(500).json({ success: false, message: "Billing failed" });
+  }
+});
+
+// Callback after merchant approves charge
+router.get("/billing/callback", async (req, res) => {
+  try {
+    const { shop, plan, charge_id } = req.query;
+
+    if (!shop || !plan || !charge_id) {
+      return res.status(400).send("Missing billing parameters");
+    }
+
+    const shopResult = await pool.query(
+      "SELECT access_token FROM shops WHERE shop_origin = $1",
+      [shop]
+    );
+    if (shopResult.rows.length === 0) {
+      return res.status(404).send("Shop not found");
+    }
+
+    const accessToken = shopResult.rows[0].access_token;
+    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+    // Activate the charge
+    const activateResponse = await fetch(
+      `https://${shop}/admin/api/${apiVersion}/recurring_application_charges/${charge_id}/activate.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ recurring_application_charge: { id: charge_id } }),
+      }
+    );
+
+    const activateData = await activateResponse.json();
+    const charge = activateData.recurring_application_charge;
+
+    if (!charge || charge.status !== "active") {
+      return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=failed`);
+    }
+
+    // Update user plan
+    await pool.query(
+      `UPDATE users SET plan = $1, shopify_charge_id = $2 WHERE id = (
+        SELECT user_id FROM shops WHERE shop_origin = $3
+      )`,
+      [plan, charge_id, shop]
+    );
+
+    return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=success&plan=${plan}`);
+  } catch (err) {
+    console.error("Billing callback error:", err);
+    return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=failed`);
+  }
+});  
   return router;
 };
