@@ -313,7 +313,7 @@ router.post("/billing/create", async (req, res) => {
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
 
     const response = await fetch(
-      `https://${shop}/admin/api/${apiVersion}/recurring_application_charges.json`,
+      `https://${shop}/admin/api/${apiVersion}/graphql.json`,
       {
         method: "POST",
         headers: {
@@ -321,30 +321,47 @@ router.post("/billing/create", async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          recurring_application_charge: {
+          query: `
+            mutation appSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!, $test: Boolean) {
+              appSubscriptionCreate(name: $name, lineItems: $lineItems, returnUrl: $returnUrl, test: $test) {
+                userErrors { field message }
+                appSubscription { id }
+                confirmationUrl
+              }
+            }
+          `,
+          variables: {
             name: planConfig.name,
-            price: planConfig.price,
-            return_url: `${APP_URL}/auth/shopify/billing/callback?shop=${shop}&plan=${plan}`,
-            trial_days: planConfig.trialDays,
-            test: process.env.NODE_ENV !== "production", // test mode in dev
-          },
+            returnUrl: `${APP_URL}/auth/shopify/billing/callback?shop=${shop}&plan=${plan}`,
+            test: process.env.NODE_ENV !== "production",
+            lineItems: [{
+              plan: {
+                appRecurringPricingDetails: {
+                  price: { amount: planConfig.price, currencyCode: "USD" },
+                  interval: "EVERY_30_DAYS"
+                }
+              }
+            }]
+          }
         }),
       }
     );
 
     const text = await response.text();
-console.log("Billing API response:", response.status, text);
-if (!text) {
-  return res.status(500).json({ success: false, message: "Empty response from Shopify billing API" });
-}
-const data = JSON.parse(text);
-const charge = data.recurring_application_charge;
+    console.log("Billing GraphQL response:", response.status, text);
+    const data = JSON.parse(text);
+    const result = data.data?.appSubscriptionCreate;
 
-    if (!charge) {
+    if (result?.userErrors?.length > 0) {
+      console.error("Billing user errors:", result.userErrors);
+      return res.status(500).json({ success: false, message: result.userErrors[0].message });
+    }
+
+    if (!result?.confirmationUrl) {
       return res.status(500).json({ success: false, message: "Failed to create charge" });
     }
 
-    return res.json({ success: true, confirmationUrl: charge.confirmation_url });
+    return res.json({ success: true, confirmationUrl: result.confirmationUrl });
   } catch (err) {
     console.error("Billing create error:", err);
     return res.status(500).json({ success: false, message: "Billing failed" });
@@ -356,54 +373,35 @@ router.get("/billing/callback", async (req, res) => {
   try {
     const { shop, plan, charge_id } = req.query;
 
-    if (!shop || !plan || !charge_id) {
+    if (!shop || !plan) {
       return res.status(400).send("Missing billing parameters");
-    }
-
-    const shopResult = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
-    if (shopResult.rows.length === 0) {
-      return res.status(404).send("Shop not found");
-    }
-
-    const accessToken = shopResult.rows[0].access_token;
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-    // Activate the charge
-    const activateResponse = await fetch(
-      `https://${shop}/admin/api/${apiVersion}/recurring_application_charges/${charge_id}/activate.json`,
-      {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ recurring_application_charge: { id: charge_id } }),
-      }
-    );
-
-    const activateData = await activateResponse.json();
-    const charge = activateData.recurring_application_charge;
-
-    if (!charge || charge.status !== "active") {
-      return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=failed`);
     }
 
     // Update user plan
     await pool.query(
-      `UPDATE users SET plan = $1, shopify_charge_id = $2 WHERE id = (
-        SELECT user_id FROM shops WHERE shop_origin = $3
+      `UPDATE users SET plan = $1 WHERE id = (
+        SELECT user_id FROM shops WHERE shop_origin = $2
       )`,
-      [plan, charge_id, shop]
+      [plan, shop]
     );
 
-    return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=success&plan=${plan}`);
+    return res.send(`
+      <html>
+        <script>
+          window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?billing=success&plan=${plan}';
+        </script>
+      </html>
+    `);
   } catch (err) {
     console.error("Billing callback error:", err);
-    return res.redirect(`${FRONTEND_URL}/dashboard/shopify?billing=failed`);
+    return res.send(`
+      <html>
+        <script>
+          window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?billing=failed';
+        </script>
+      </html>
+    `);
   }
-});  
+});
   return router;
 };
