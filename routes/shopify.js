@@ -332,8 +332,13 @@ router.post("/billing/create", async (req, res) => {
       }
     );
 
-    const data = await response.json();
-    const charge = data.recurring_application_charge;
+    const text = await response.text();
+console.log("Billing API response:", response.status, text);
+if (!text) {
+  return res.status(500).json({ success: false, message: "Empty response from Shopify billing API" });
+}
+const data = JSON.parse(text);
+const charge = data.recurring_application_charge;
 
     if (!charge) {
       return res.status(500).json({ success: false, message: "Failed to create charge" });
