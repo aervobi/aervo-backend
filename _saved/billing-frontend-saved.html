@@ -1,0 +1,81 @@
+// ============= BILLING ============= async function upgradePlan(plan) { const
+shop = shopData?.shopOrigin; if (!shop) { alert("No shop connected"); return; }
+try { const response = await fetch(
+`${BACKEND_URL}/auth/shopify/billing/create`, { method: "POST", headers: {
+"Content-Type": "application/json", Authorization: `Bearer ${token}`, }, body:
+JSON.stringify({ shop, plan }), }, ); const data = await response.json(); if
+(data.success && data.confirmationUrl) { window.top.location.href =
+data.confirmationUrl; } else { alert("Failed to create billing charge. Please
+try again."); } } catch (err) { console.error("Billing error:", err);
+alert("Something went wrong. Please try again."); } } // ============= BOOT
+============= loadUserData(); // ── HEALTH SCORE
+─────────────────────────────────────────────── async function loadHealthScore()
+{ try { const res = await fetch(`${BACKEND_URL}/api/health-score`, { headers: {
+Authorization: `Bearer ${token}` }, }); const data = await res.json(); if
+(data.success && data.score) { renderHealthScore(data.score); } else {
+calculateHealthScore(); } } catch (e) { console.error("Health score error:", e);
+} } fetch(`${BACKEND_URL}/api/user/me`, { headers: { Authorization: `Bearer
+${token}` }, }) .then((r) => r.json()) .then((d) => console.log("USER ME
+RESPONSE:", JSON.stringify(d))); async function calculateHealthScore() { const
+shopOrigin = shopData?.shopOrigin || localStorage.getItem("shopify_shop"); if
+(!shopOrigin) return; try { const res = await
+fetch(`${BACKEND_URL}/api/health-score/calculate`, { method: "POST", headers: {
+Authorization: `Bearer ${token}`, "Content-Type": "application/json", }, body:
+JSON.stringify({ shopOrigin }), }); const data = await res.json(); if
+(data.success) renderHealthScore(data.score, data.ai); } catch (e) {
+console.error("Calculate score error:", e); } } async function
+recalculateScore() { const btn = document.getElementById("recalcBtn"); if (!btn)
+return; btn.textContent = "↻ Calculating..."; btn.disabled = true; await
+calculateHealthScore(); btn.textContent = "↻ Recalculate"; btn.disabled = false;
+} function renderHealthScore(score, ai) { const s = score.score; const color = s
+>= 70 ? "#23e6a8" : s >= 40 ? "#fbbf24" : "#f87171"; const grade = s >= 70 ?
+"Healthy 💚" : s >= 40 ? "Needs Attention ⚠️" : "At Risk 🔴"; const ring =
+document.getElementById("scoreRing"); const numEl =
+document.getElementById("scoreNumber"); const gradeEl =
+document.getElementById("scoreGrade"); const summaryEl =
+document.getElementById("scoreSummary"); if (!ring || !numEl) return; const
+circumference = 264; const offset = circumference - (s / 100) * circumference;
+ring.style.stroke = color; setTimeout(() => { ring.style.strokeDashoffset =
+offset; }, 100); numEl.textContent = s; numEl.style.color = color;
+gradeEl.textContent = grade; gradeEl.style.color = color; summaryEl.textContent
+= score.summary || ""; const breakdown = [ { label: "Revenue", score:
+score.revenue_score, max: 25 }, { label: "Orders", score: score.orders_score,
+max: 20 }, { label: "Refunds", score: score.refund_score, max: 20 }, { label:
+"Inventory", score: score.inventory_score, max: 20 }, { label: "Retention",
+score: score.retention_score, max: 15 }, ]; const breakdownEl =
+document.getElementById("scoreBreakdown"); if (breakdownEl) {
+breakdownEl.innerHTML = breakdown .map((b) => { const pct = (b.score / b.max) *
+100; const c = pct >= 70 ? "#23e6a8" : pct >= 40 ? "#fbbf24" : "#f87171"; return
+`
+<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px">
+  <div style="font-size: 12px; color: #6b7a99; width: 65px">${b.label}</div>
+  <div
+    style="
+      flex: 1;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      overflow: hidden;
+    "
+  >
+    <div
+      style="width:${pct}%;height:100%;background:${c};border-radius:999px;transition:width 1s;"
+    ></div>
+  </div>
+  <div style="font-size: 11px; color: #9aa8c8; width: 30px; text-align: right">
+    ${b.score}/${b.max}
+  </div>
+</div>
+`; }) .join(""); } let improvements = []; try { const parsed = typeof
+score.improvements === "string" ? JSON.parse(score.improvements) :
+score.improvements; improvements = parsed.improvements || []; } catch (e) {} if
+(ai?.improvements) improvements = ai.improvements; const impEl =
+document.getElementById("scoreImprovements"); if (impEl) { impEl.innerHTML =
+improvements .map( (imp) => `
+<div
+  style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px"
+>
+  <span style="color: #f87171; font-size: 12px; margin-top: 1px">→</span>
+  <span style="font-size: 12px; color: #9aa8c8; line-height: 1.5">${imp}</span>
+</div>
+`, ) .join(""); } }
