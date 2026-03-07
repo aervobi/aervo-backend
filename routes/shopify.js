@@ -113,6 +113,36 @@ module.exports = function (pool) {
       if (!shop || !shop.endsWith(".myshopify.com")) {
         return res.status(400).send("Invalid shop domain.");
       }
+      // If shop already installed, skip OAuth and redirect to dashboard
+const existingShop = await pool.query(
+  "SELECT access_token FROM shops WHERE shop_origin = $1",
+  [shop]
+);
+if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
+  // Find the user for this shop
+  const userResult = await pool.query(
+    "SELECT u.* FROM users u JOIN shops s ON s.user_id = u.id WHERE s.shop_origin = $1",
+    [shop]
+  );
+  if (userResult.rows.length > 0) {
+    const jwt = require("jsonwebtoken");
+    const user = userResult.rows[0];
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    return res.send(`
+      <html>
+        <body>
+          <script>
+            window.location.href = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}';
+          </script>
+        </body>
+      </html>
+    `);
+  }
+}
 
       const state = crypto.randomBytes(16).toString("hex");
 
