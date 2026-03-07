@@ -214,194 +214,48 @@ module.exports = function (pool) {
            installed_at = NOW()`,
         [shop, access_token, scope || null]
       );
-// ✅ Register mandatory compliance webhooks + app/uninstalled
+
+      // ✅ Register mandatory compliance webhooks + app/uninstalled
       await registerRequiredWebhooks(shop, access_token);
 
-      console.log(`✅ Shop ${shop} connected + webhooks registered`);
+    console.log(`✅ Shop ${shop} connected + webhooks registered`);
 
-      const bcrypt = require("bcryptjs");
-      const jwt = require("jsonwebtoken");
-      const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
-      console.log("Shop email:", shopEmail);
+// Auto-login: find or create Aervo user for this shop
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const shopEmail = `${shop.replace(".myshopify.com", "")}@shopify.aervoapp.com`;
 
-      const existing = await pool.query("SELECT * FROM users WHERE email = $1", [shopEmail]);
-      console.log("Existing user found:", existing.rows.length);
+let user;
+const existing = await pool.query("SELECT * FROM users WHERE email = $1", [shopEmail]);
 
-      let user;
-      if (existing.rows.length > 0) {
-        user = existing.rows[0];
-      } else {
-        console.log("Creating new user...");
-        const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-        const result = await pool.query(
-          `INSERT INTO users (email, password_hash, company_name, role, email_verified)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [shopEmail, passwordHash, shop, "Owner", true]
-        );
-        user = result.rows[0];
-        console.log("New user created:", user.id);
-      }
-
-    console.log("User ID:", user.id);
-await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
-console.log("Shop linked to user");
-
-// Also insert into connected_stores so /api/user/me can find it
-const existingStore = await pool.query(
-  `SELECT id FROM connected_stores WHERE user_id = $1 AND store_origin = $2`,
-  [user.id, shop]
-);
-
-if (existingStore.rows.length > 0) {
-  await pool.query(
-    `UPDATE connected_stores SET is_active = true, connected_at = NOW() WHERE user_id = $1 AND store_origin = $2`,
-    [user.id, shop]
-  );
+if (existing.rows.length > 0) {
+  user = existing.rows[0];
 } else {
-  await pool.query(
-    `INSERT INTO connected_stores (user_id, integration_name, store_id, store_name, store_origin, is_active, connected_at)
-     VALUES ($1, 'shopify', $2, $2, $2, true, NOW())`,
-    [user.id, shop]
+  const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+  const result = await pool.query(
+    `INSERT INTO users (email, password_hash, company_name, role, email_verified)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [shopEmail, passwordHash, shop, "Owner", true]
   );
+  user = result.rows[0];
 }
+
+await pool.query("UPDATE shops SET user_id = $1 WHERE shop_origin = $2", [user.id, shop]);
 
 const token = jwt.sign(
   { userId: user.id, email: user.email },
   process.env.JWT_SECRET,
   { expiresIn: "7d" }
 );
-console.log("Token generated, redirecting...");
 
-return res.send(`
-  <html>
-    <script>
-      window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}';
-    </script>
-  </html>
-`);
+return res.redirect(
+  `${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}`
+);  
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
     }
   });
 
-// ============= SHOPIFY BILLING =============
-const PLANS_CONFIG = {
-  essential: { name: "Aervo Essential", price: "19.00", trialDays: 0 },
-  pro: { name: "Aervo Pro", price: "49.00", trialDays: 14 },
-  business: { name: "Aervo Business", price: "99.00", trialDays: 0 },
-};
-
-// Create a charge for a plan
-router.post("/billing/create", async (req, res) => {
-  try {
-    const { shop, plan } = req.body;
-    if (!shop || !plan || !PLANS_CONFIG[plan]) {
-      return res.status(400).json({ success: false, message: "Invalid plan or shop" });
-    }
-
-    const shopResult = await pool.query(
-      "SELECT access_token FROM shops WHERE shop_origin = $1",
-      [shop]
-    );
-    if (shopResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Shop not found" });
-    }
-
-    const accessToken = shopResult.rows[0].access_token;
-    const planConfig = PLANS_CONFIG[plan];
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-    const response = await fetch(
-      `https://${shop}/admin/api/${apiVersion}/graphql.json`,
-      {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: `
-            mutation appSubscriptionCreate($name: String!, $lineItems: [AppSubscriptionLineItemInput!]!, $returnUrl: URL!, $test: Boolean) {
-              appSubscriptionCreate(name: $name, lineItems: $lineItems, returnUrl: $returnUrl, test: $test) {
-                userErrors { field message }
-                appSubscription { id }
-                confirmationUrl
-              }
-            }
-          `,
-          variables: {
-            name: planConfig.name,
-            returnUrl: `${APP_URL}/auth/shopify/billing/callback?shop=${shop}&plan=${plan}`,
-            test: process.env.NODE_ENV !== "production",
-            lineItems: [{
-              plan: {
-                appRecurringPricingDetails: {
-                  price: { amount: planConfig.price, currencyCode: "USD" },
-                  interval: "EVERY_30_DAYS"
-                }
-              }
-            }]
-          }
-        }),
-      }
-    );
-
-    const text = await response.text();
-    console.log("Billing GraphQL response:", response.status, text);
-    const data = JSON.parse(text);
-    const result = data.data?.appSubscriptionCreate;
-
-    if (result?.userErrors?.length > 0) {
-      console.error("Billing user errors:", result.userErrors);
-      return res.status(500).json({ success: false, message: result.userErrors[0].message });
-    }
-
-    if (!result?.confirmationUrl) {
-      return res.status(500).json({ success: false, message: "Failed to create charge" });
-    }
-
-    return res.json({ success: true, confirmationUrl: result.confirmationUrl });
-  } catch (err) {
-    console.error("Billing create error:", err);
-    return res.status(500).json({ success: false, message: "Billing failed" });
-  }
-});
-
-// Callback after merchant approves charge
-router.get("/billing/callback", async (req, res) => {
-  try {
-    const { shop, plan, charge_id } = req.query;
-
-    if (!shop || !plan) {
-      return res.status(400).send("Missing billing parameters");
-    }
-
-    // Update user plan
-    await pool.query(
-      `UPDATE users SET plan = $1 WHERE id = (
-        SELECT user_id FROM shops WHERE shop_origin = $2
-      )`,
-      [plan, shop]
-    );
-
-    return res.send(`
-      <html>
-        <script>
-          window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?billing=success&plan=${plan}';
-        </script>
-      </html>
-    `);
-  } catch (err) {
-    console.error("Billing callback error:", err);
-    return res.send(`
-      <html>
-        <script>
-          window.top.location.href = '${FRONTEND_URL}/dashboard/shopify?billing=failed';
-        </script>
-      </html>
-    `);
-  }
-});
   return router;
 };
