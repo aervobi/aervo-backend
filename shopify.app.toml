@@ -2,7 +2,7 @@
 
 client_id = "42d18ab94654c48ad51d381269a89bcc"
 name = "Aervo"
-application_url = application_url = "https://aervoapp.com/dashboard/shopify"
+application_url = "https://aervoapp.com"
 
 embedded = true
 
