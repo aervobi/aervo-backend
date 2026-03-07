@@ -314,5 +314,45 @@ return res.send(`
     }
   });
 
+  // Session token exchange — App Bridge sends this, we return a JWT
+router.post("/session-token", async (req, res) => {
+  try {
+    const { sessionToken, shop } = req.body;
+    if (!sessionToken || !shop) {
+      return res.status(400).json({ success: false, message: "Missing sessionToken or shop" });
+    }
+
+    // Verify the session token (it's a JWT signed by Shopify)
+    const jwt = require("jsonwebtoken");
+    const decoded = jwt.verify(sessionToken, SHOPIFY_API_SECRET, { algorithms: ["HS256"] });
+
+    if (!decoded || !decoded.dest) {
+      return res.status(401).json({ success: false, message: "Invalid session token" });
+    }
+
+    // Find user for this shop
+    const userResult = await pool.query(
+      "SELECT u.* FROM users u JOIN shops s ON s.user_id = u.id WHERE s.shop_origin = $1",
+      [shop]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not found" });
+    }
+
+    const user = userResult.rows[0];
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.json({ success: true, token });
+  } catch (err) {
+    console.error("Session token exchange error:", err);
+    return res.status(401).json({ success: false, message: "Invalid session token" });
+  }
+});
+
   return router;
 };
