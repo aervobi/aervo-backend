@@ -136,7 +136,7 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
       <html>
         <body>
           <script>
-            window.location.href = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}';
+            window.location.href = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}';
           </script>
         </body>
       </html>
