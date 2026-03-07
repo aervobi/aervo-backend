@@ -111,7 +111,7 @@ module.exports = function (pool) {
       const shop = String(req.query.shop || "").trim().toLowerCase();
 
       if (!shop || !shop.endsWith(".myshopify.com")) {
-        return res.status(400).send("Invalid shop domain.");
+  return res.redirect("https://admin.shopify.com");
       }
 
       const state = crypto.randomBytes(16).toString("hex");
