@@ -31,10 +31,11 @@ app.set("trust proxy", 1);
 
 app.use(
   cors({
-    origin: ["https://aervoapp.com", "https://www.aervoapp.com"],
+    origin: ["https://aervoapp.com", "https://www.aervoapp.com", "https://admin.shopify.com"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with"],
     exposedHeaders: ["Content-Type"],
+    credentials: true,
   })
 );
 app.options("*", cors());
@@ -101,6 +102,8 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: isHostedDb ? { rejectUnauthorized: false } : false,
 });
+
+app.locals.pool = pool;
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
 
