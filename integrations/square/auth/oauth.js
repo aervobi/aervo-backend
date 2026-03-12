@@ -4,10 +4,11 @@ const axios = require('axios');
 const { saveTokens, getTokensByMerchant } = require('./tokenStore');
 const { startInitialSync } = require('../sync/initialSync');
 
-const SQUARE_OAUTH_BASE =
-  process.env.SQUARE_ENVIRONMENT === 'production'
+function getSquareBase() {
+  return process.env.SQUARE_ENVIRONMENT === 'production'
     ? 'https://connect.squareup.com'
     : 'https://connect.squareupsandbox.com';
+}
 
 const REQUIRED_SCOPES = [
   'MERCHANT_PROFILE_READ',
