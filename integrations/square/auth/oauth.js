@@ -64,7 +64,7 @@ async function handleOAuthCallback(req, res) {
 
   try {
     const tokenResponse = await axios.post(
-      `${SQUARE_OAUTH_BASE}/oauth2/token`,
+      `${getSquareBase()}/oauth2/token`,
       {
         client_id: process.env.SQUARE_APP_ID,
         client_secret: process.env.SQUARE_APP_SECRET,
@@ -129,7 +129,7 @@ async function refreshAccessToken(merchantId) {
   }
 
   const response = await axios.post(
-    `${SQUARE_OAUTH_BASE}/oauth2/token`,
+    `${getSquareBase()}/oauth2/token`,
     {
       client_id: process.env.SQUARE_APP_ID,
       client_secret: process.env.SQUARE_APP_SECRET,
