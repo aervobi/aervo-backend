@@ -40,7 +40,7 @@ function handleConnectRequest(req, res) {
     state,
   });
 
-  const authUrl = `${SQUARE_OAUTH_BASE}/oauth2/authorize?${params}`;
+  const authUrl = `${getSquareBase()}/oauth2/authorize?${params}`;
   console.log('Redirecting merchant to Square OAuth:', authUrl);
   res.redirect(authUrl);
 }
