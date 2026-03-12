@@ -281,6 +281,16 @@ app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
 });
 
+// TEMPORARY DEBUG - remove after fixing Square
+app.get("/debug/square-env", (req, res) => {
+  res.json({
+    environment: process.env.SQUARE_ENVIRONMENT,
+    appId: process.env.SQUARE_APP_ID ? "set" : "missing",
+    appSecret: process.env.SQUARE_APP_SECRET ? "set" : "missing",
+    redirectUri: process.env.SQUARE_REDIRECT_URI,
+  });
+});
+
 // ==============================
 // ✅ SHOPIFY REQUIRED WEBHOOKS
 // (Mandatory compliance webhooks)
