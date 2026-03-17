@@ -1,16 +1,26 @@
-const { Client, Environment } = require('square');
+const { SquareClient, SquareEnvironment } = require('square');
 
 function buildSquareClient(accessToken) {
   const environment =
     process.env.SQUARE_ENVIRONMENT === 'production'
-      ? Environment.Production
-      : Environment.Sandbox;
+      ? SquareEnvironment.Production
+      : SquareEnvironment.Sandbox;
 
-  return new Client({
-    accessToken,
+  const client = new SquareClient({
+    token: accessToken,
     environment,
-    additionalHeaders: { 'X-Aervo-Client': 'aervo/1.0' },
   });
+
+  // Map old API names to new SDK structure
+  client.locationsApi = client.locations;
+  client.ordersApi = client.orders;
+  client.customersApi = client.customers;
+  client.catalogApi = client.catalog;
+  client.bookingsApi = client.bookings;
+  client.inventoryApi = client.inventory;
+  client.paymentsApi = client.payments;
+
+  return client;
 }
 
 function buildAppClient() {

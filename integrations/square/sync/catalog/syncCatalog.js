@@ -1,17 +1,13 @@
 const { pool } = require('../../../../db');
 
 async function syncCatalog({ client, merchantId }) {
-  let cursor = null;
+  let cursor = undefined;
   let totalSynced = 0;
 
   do {
-    const response = await client.catalogApi.listCatalog(cursor, 'ITEM,CATEGORY,ITEM_VARIATION');
-    if (response.result.errors?.length) {
-      throw new Error(`Square listCatalog error: ${JSON.stringify(response.result.errors)}`);
-    }
-
-    const objects = response.result.objects || [];
-    cursor = response.result.cursor || null;
+    const response = await client.catalog.list({ cursor, types: 'ITEM,CATEGORY,ITEM_VARIATION' });
+    const objects = response.objects || [];
+    cursor = response.cursor || undefined;
 
     if (objects.length) {
       await upsertCatalogObjects(objects, merchantId);

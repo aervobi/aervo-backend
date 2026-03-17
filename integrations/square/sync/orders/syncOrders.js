@@ -1,7 +1,7 @@
 const { pool } = require('../../../../db');
 
 async function syncOrders({ client, merchantId, locationId, startAt }) {
-  let cursor = null;
+  let cursor = undefined;
   let totalSynced = 0;
 
   do {
@@ -19,13 +19,9 @@ async function syncOrders({ client, merchantId, locationId, startAt }) {
     };
     if (cursor) body.cursor = cursor;
 
-    const response = await client.ordersApi.searchOrders(body);
-    if (response.result.errors?.length) {
-      throw new Error(`Square searchOrders error: ${JSON.stringify(response.result.errors)}`);
-    }
-
-    const orders = response.result.orders || [];
-    cursor = response.result.cursor || null;
+    const response = await client.orders.search(body);
+    const orders = response.orders || [];
+    cursor = response.cursor || undefined;
 
     if (orders.length) {
       await upsertOrders(orders, merchantId, locationId);

@@ -1,13 +1,8 @@
 const { pool } = require('../../../db');
 
 async function syncLocations({ client, merchantId }) {
-  const response = await client.locationsApi.listLocations();
-
-  if (response.result.errors?.length) {
-    throw new Error(`Square listLocations error: ${JSON.stringify(response.result.errors)}`);
-  }
-
-  const activeLocations = (response.result.locations || []).filter(l => l.status === 'ACTIVE');
+  const response = await client.locations.list();
+  const activeLocations = (response.locations || []).filter(l => l.status === 'ACTIVE');
   const upserted = [];
 
   for (const loc of activeLocations) {
@@ -38,7 +33,6 @@ async function syncLocations({ client, merchantId }) {
     );
     upserted.push({ squareLocationId: loc.id, name: loc.name });
   }
-
   return upserted;
 }
 

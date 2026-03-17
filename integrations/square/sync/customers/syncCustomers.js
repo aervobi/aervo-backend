@@ -1,17 +1,13 @@
 const { pool } = require('../../../../db');
 
 async function syncCustomers({ client, merchantId }) {
-  let cursor = null;
+  let cursor = undefined;
   let totalSynced = 0;
 
   do {
-    const response = await client.customersApi.listCustomers(cursor, 100, 'CREATED_AT', 'ASC');
-    if (response.result.errors?.length) {
-      throw new Error(`Square listCustomers error: ${JSON.stringify(response.result.errors)}`);
-    }
-
-    const customers = response.result.customers || [];
-    cursor = response.result.cursor || null;
+    const response = await client.customers.list({ cursor, limit: 100, sortField: 'CREATED_AT', sortOrder: 'ASC' });
+    const customers = response.customers || [];
+    cursor = response.cursor || undefined;
 
     if (customers.length) {
       await upsertCustomers(customers, merchantId);
