@@ -38,6 +38,7 @@ function handleConnectRequest(req, res) {
     scope: REQUIRED_SCOPES,
     session: 'false',
     state,
+     redirect_uri: process.env.SQUARE_REDIRECT_URI,
   });
 
   const authUrl = `${getSquareBase()}/oauth2/authorize?${params}`;
