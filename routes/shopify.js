@@ -303,8 +303,7 @@ return res.send(`
     </head>
     <body>
       <script>
-        window.location.href = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}';
-      </script>
+window.location.href = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}&standalone=1';      </script>
     </body>
   </html>
 `); 
