@@ -1,18 +1,14 @@
-// ============================================================
+]// ============================================================
 // Aervo Smart Playbooks — Backend Routes
 // File: routes/playbooks.js
 // ============================================================
-// Mount in your main server file with:
-//   const playbooksRouter = require('./routes/playbooks');
-//   app.use('/api/playbooks', authenticateToken, playbooksRouter);
-// ============================================================
 
-const express = require('express');
-const router  = express.Router();
-const pool    = require('../db');           // your existing pg Pool
+const express   = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+module.exports = function (pool, authenticateToken) {
+  const router   = express.Router();
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ============================================================
 // TRIGGER DEFINITIONS
@@ -187,7 +183,7 @@ Example format:
 // playbooks for any triggers not already active in the DB.
 // ============================================================
 
-router.get('/', async (req, res) => {
+router.get('/api/playbooks', authenticateToken, async (req, res) => {
   const userId      = req.user.id;
   const integration = req.query.integration || 'shopify';
 
@@ -279,7 +275,7 @@ router.get('/', async (req, res) => {
 // PATCH /api/playbooks/steps/:stepId/complete
 // Toggle a single step complete/incomplete.
 
-router.patch('/steps/:stepId/complete', async (req, res) => {
+router.patch('/api/playbooks/steps/:stepId/complete', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { stepId } = req.params;
   const { is_complete } = req.body;
@@ -333,7 +329,7 @@ router.patch('/steps/:stepId/complete', async (req, res) => {
 // PATCH /api/playbooks/:id/dismiss
 // Dismiss an active playbook.
 
-router.patch('/:id/dismiss', async (req, res) => {
+router.patch('/api/playbooks/:id/dismiss', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { id } = req.params;
 
@@ -456,4 +452,5 @@ async function fetchStoreDataForDetection(userId, integration, pool) {
   };
 }
 
-module.exports = router;
+  return router;
+};

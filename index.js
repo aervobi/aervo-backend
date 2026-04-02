@@ -240,6 +240,10 @@ app.use("/", healthScoreRoutes);
 const stickyRoutes = require("./routes/stickyFeatures")(pool, authenticateToken);
 app.use("/", stickyRoutes);
 
+// Smart Playbooks routes
+const playbooksRoutes = require("./routes/playbooks")(pool, authenticateToken);
+app.use("/", playbooksRoutes);
+
 // Intelligence Center
 app.get("/intelligence", (req, res) => {
   res.sendFile(path.join(__dirname, "../aervo/intelligence.html"));
