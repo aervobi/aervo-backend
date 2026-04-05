@@ -103,13 +103,7 @@ async function handleOAuthCallback(req, res) {
         console.error('Initial Square sync failed', { merchantId, error: err.message })
       );
 
-    // Temporary success response until frontend dashboard is built
-    res.json({
-      success: true,
-      message: 'Square connected successfully! Data sync has started.',
-      merchantId,
-      squareMerchantId,
-    });
+    res.redirect(`https://aervoapp.com/dashboard/square?connected=1&merchantId=${merchantId}`);
 
   } catch (err) {
     console.error('Square OAuth token exchange failed', {
