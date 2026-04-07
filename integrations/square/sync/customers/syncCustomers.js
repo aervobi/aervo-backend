@@ -5,9 +5,9 @@ async function syncCustomers({ client, merchantId }) {
   let totalSynced = 0;
 
   do {
-    const response = await client.customers.list({ cursor, limit: 100, sortField: 'CREATED_AT', sortOrder: 'ASC' });
-    const customers = response.customers || [];
-    cursor = response.cursor || undefined;
+    const response = await client.customers.list(cursor ? { cursor, sortField: "CREATED_AT", sortOrder: "ASC" } : { sortField: "CREATED_AT", sortOrder: "ASC" });
+    const customers = response.data || response.customers || [];
+    cursor = response.cursor || response.rawResponse?.cursor || undefined;
 
     if (customers.length) {
       await upsertCustomers(customers, merchantId);
@@ -40,7 +40,7 @@ async function upsertCustomers(customers, merchantId) {
           c.emailAddress || null, c.phoneNumber || null, c.birthday || null,
           c.address ? JSON.stringify(c.address) : null, c.note || null,
           c.referenceId || null, c.creationSource || null,
-          c.createdAt, c.updatedAt, null, null, null, JSON.stringify(c),
+          c.createdAt, c.updatedAt, null, null, null, JSON.stringify(c, (key, value) => typeof value === "bigint" ? value.toString() : value),
         ]
       );
     }

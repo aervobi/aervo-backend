@@ -10,7 +10,7 @@ async function syncOrders({ client, merchantId, locationId, startAt }) {
       query: {
         filter: {
           dateTimeFilter: { createdAt: { startAt } },
-          stateFilter: { states: ['COMPLETED', 'CANCELED'] },
+          stateFilter: { states: ['COMPLETED', 'CANCELED', 'OPEN'] },
         },
         sort: { sortField: 'CREATED_AT', sortOrder: 'ASC' },
       },
@@ -49,10 +49,10 @@ async function upsertOrders(orders, merchantId, locationId) {
            closed_at=EXCLUDED.closed_at, raw_data=EXCLUDED.raw_data, updated_at=NOW()`,
         [
           order.id, merchantId, locationId, order.customerId || null, order.state,
-          order.totalMoney?.amount || 0, order.totalTaxMoney?.amount || 0,
-          order.totalDiscountMoney?.amount || 0, order.totalMoney?.currency || 'USD',
+          Number(order.totalMoney?.amount || 0), Number(order.totalTaxMoney?.amount || 0),
+          Number(order.totalDiscountMoney?.amount || 0), order.totalMoney?.currency || 'USD',
           order.source?.name || 'POS', order.createdAt, order.updatedAt,
-          order.closedAt || null, JSON.stringify(order),
+          order.closedAt || null, JSON.stringify(order, (key, value) => typeof value === "bigint" ? value.toString() : value),
         ]
       );
 
@@ -66,8 +66,8 @@ async function upsertOrders(orders, merchantId, locationId) {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
             order.id, merchantId, item.catalogObjectId || null, item.name,
-            parseFloat(item.quantity), item.basePriceMoney?.amount || 0,
-            item.grossSalesMoney?.amount || 0, item.variationName || null, item.note || null,
+            parseFloat(item.quantity), Number(item.basePriceMoney?.amount || 0),
+            Number(item.grossSalesMoney?.amount || 0), item.variationName || null, item.note || null,
           ]
         );
       }

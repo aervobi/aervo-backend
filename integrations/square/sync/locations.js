@@ -2,7 +2,7 @@ const { pool } = require('../../../db');
 
 async function syncLocations({ client, merchantId }) {
   const response = await client.locations.list();
-  const activeLocations = (response.locations || []).filter(l => l.status === 'ACTIVE');
+  const activeLocations = (response.data || response.locations || []).filter(l => l.status === 'ACTIVE');
   const upserted = [];
 
   for (const loc of activeLocations) {
