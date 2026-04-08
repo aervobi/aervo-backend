@@ -81,8 +81,20 @@ router.get('/orders', async (req, res) => {
   const { merchantId } = req.query;
   if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
   try {
-    const result = await pool.query(`SELECT * FROM square_orders WHERE aervo_merchant_id = $1 ORDER BY created_at DESC LIMIT 200`, [merchantId]);
-    res.json({ success: true, orders: result.rows });
+    const result = await pool.query(`
+      SELECT o.*,
+        COALESCE(SUM(li.gross_amount::numeric), o.total_amount, 0) as computed_total
+      FROM square_orders o
+      LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
+      WHERE o.aervo_merchant_id = $1
+      GROUP BY o.id
+      ORDER BY o.created_at DESC LIMIT 200
+    `, [merchantId]);
+    const orders = result.rows.map(o => ({
+      ...o,
+      total_amount: parseFloat(o.computed_total) || 0
+    }));
+    res.json({ success: true, orders });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
