@@ -78,18 +78,29 @@ router.get('/locations', async (req, res) => {
 });
 
 router.get('/orders', async (req, res) => {
-  const { merchantId } = req.query;
+  const { merchantId, filter, service } = req.query;
   if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
   try {
+    let dateFilter = '';
+    if (filter === 'today') dateFilter = `AND o.created_at >= CURRENT_DATE`;
+    else if (filter === '7days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '7 days'`;
+    else if (filter === '30days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '30 days'`;
+
     const result = await pool.query(`
-      SELECT o.*,
-        COALESCE(SUM(li.gross_amount::numeric), o.total_amount, 0) as computed_total
+      SELECT 
+        o.*,
+        COALESCE(SUM(li.gross_amount::numeric), 0) as computed_total,
+        c.given_name || ' ' || COALESCE(c.family_name, '') as customer_name,
+        STRING_AGG(DISTINCT li.name, ', ') FILTER (WHERE li.name != 'Tip') as services
       FROM square_orders o
       LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
-      WHERE o.aervo_merchant_id = $1
-      GROUP BY o.id
-      ORDER BY o.created_at DESC LIMIT 200
+      LEFT JOIN square_customers c ON c.square_customer_id = o.square_customer_id 
+        AND c.aervo_merchant_id = o.aervo_merchant_id
+      WHERE o.aervo_merchant_id = $1 ${dateFilter}
+      GROUP BY o.id, c.given_name, c.family_name
+      ORDER BY o.created_at DESC LIMIT 500
     `, [merchantId]);
+
     const orders = result.rows.map(o => ({
       ...o,
       total_amount: parseFloat(o.computed_total) || 0
