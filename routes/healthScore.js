@@ -64,63 +64,39 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
       products = invData.products || [];
 
     } else if (merchantId) {
-    // ── SQUARE ───────────────────────────────────────────────
       platform = "square";
-      const storeResult = await pool.query(
-        `SELECT access_token FROM connected_stores 
-         WHERE user_id = $1 AND integration_name = 'square' AND is_active = true`,
-        [req.user.userId]
-      );
-      if (storeResult.rows.length === 0) {
-        return res.status(404).json({ success: false, message: "Square store not found" });
-      }
-      const accessToken = storeResult.rows[0].access_token;
-      const sqHeaders = { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" };
-
-      // Get real Square location IDs
-      const locRes = await fetch(`https://connect.squareup.com/v2/locations`, { headers: sqHeaders });
-      const locData = await locRes.json();
-      const locationIds = (locData.locations || []).map(l => l.id);
-      console.log('Square locations:', JSON.stringify(locData));
-
-      if (locationIds.length === 0) {
-        return res.status(400).json({ success: false, message: "No Square locations found" });
-      }
-
       const now = new Date();
       const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
       const sixtyDaysAgo = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
 
       const [currentRes, prevRes] = await Promise.all([
-        fetch(`https://connect.squareup.com/v2/orders/search`, {
-          method: "POST",
-          headers: sqHeaders,
-          body: JSON.stringify({ location_ids: locationIds, query: { filter: { date_time_filter: { created_at: { start_at: thirtyDaysAgo } } } }, limit: 500 })
-        }),
-        fetch(`https://connect.squareup.com/v2/orders/search`, {
-          method: "POST",
-          headers: sqHeaders,
-          body: JSON.stringify({ location_ids: locationIds, query: { filter: { date_time_filter: { created_at: { start_at: sixtyDaysAgo, end_at: thirtyDaysAgo } } } }, limit: 500 })
-        })
+        pool.query(`
+          SELECT o.square_customer_id as email,
+            COALESCE(SUM(li.gross_amount::numeric), 0) as total_price
+          FROM square_orders o
+          LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
+          WHERE o.aervo_merchant_id = $1 AND o.created_at >= $2
+          GROUP BY o.id, o.square_customer_id
+        `, [merchantId, thirtyDaysAgo]),
+        pool.query(`
+          SELECT o.square_customer_id as email,
+            COALESCE(SUM(li.gross_amount::numeric), 0) as total_price
+          FROM square_orders o
+          LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
+          WHERE o.aervo_merchant_id = $1 AND o.created_at >= $2 AND o.created_at < $3
+          GROUP BY o.id, o.square_customer_id
+        `, [merchantId, sixtyDaysAgo, thirtyDaysAgo])
       ]);
-      
 
-      const [currentData, prevData] = await Promise.all([currentRes.json(), prevRes.json()]);
-
-      
-
-
-
-      // Normalize Square orders to match expected shape
-      currentOrders = (currentData.orders || []).map(o => ({
-        total_price: o.total_money ? (o.total_money.amount / 100).toFixed(2) : "0",
-        financial_status: o.state === "COMPLETED" ? "paid" : "pending",
-        email: o.customer_id || null
+      currentOrders = currentRes.rows.map(o => ({
+        total_price: (parseFloat(o.total_price) / 100).toFixed(2),
+        financial_status: 'paid',
+        email: o.email
       }));
-      prevOrders = (prevData.orders || []).map(o => ({
-        total_price: o.total_money ? (o.total_money.amount / 100).toFixed(2) : "0",
-        financial_status: o.state === "COMPLETED" ? "paid" : "pending",
-        email: o.customer_id || null
+      prevOrders = prevRes.rows.map(o => ({
+        total_price: (parseFloat(o.total_price) / 100).toFixed(2),
+        financial_status: 'paid',
+        email: o.email
       }));
 
     } else {
