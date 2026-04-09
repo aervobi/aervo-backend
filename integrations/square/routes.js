@@ -86,35 +86,36 @@ router.get('/orders', async (req, res) => {
     else if (filter === '7days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '7 days'`;
     else if (filter === '30days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '30 days'`;
 
+    let serviceFilter = '';
+    if (service) serviceFilter = `AND EXISTS (SELECT 1 FROM square_order_line_items li2 WHERE li2.square_order_id = o.square_order_id AND li2.name ILIKE $2)`;
+
+    const params = service ? [merchantId, `%${service}%`] : [merchantId];
+
     const result = await pool.query(`
       SELECT 
         o.*,
         COALESCE(SUM(li.gross_amount::numeric), 0) as computed_total,
-        c.given_name || ' ' || COALESCE(c.family_name, '') as customer_name,
-        STRING_AGG(DISTINCT li.name, ', ') FILTER (WHERE li.name != 'Tip') as services
+        TRIM(COALESCE(c.given_name, '') || ' ' || COALESCE(c.family_name, '')) as customer_name,
+        STRING_AGG(DISTINCT li.name, ', ') FILTER (WHERE li.name != 'Tip') as services,
+        JSON_AGG(JSON_BUILD_OBJECT(
+          'name', li.name,
+          'quantity', li.quantity,
+          'amount', li.gross_amount
+        )) FILTER (WHERE li.name IS NOT NULL) as line_items
       FROM square_orders o
       LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
       LEFT JOIN square_customers c ON c.square_customer_id = o.square_customer_id 
         AND c.aervo_merchant_id = o.aervo_merchant_id
-      WHERE o.aervo_merchant_id = $1 ${dateFilter}
+      WHERE o.aervo_merchant_id = $1 ${dateFilter} ${serviceFilter}
       GROUP BY o.id, c.given_name, c.family_name
-      ORDER BY o.created_at DESC LIMIT 500
-    `, [merchantId]);
+      ORDER BY o.created_at DESC LIMIT 1000
+    `, params);
 
     const orders = result.rows.map(o => ({
       ...o,
       total_amount: parseFloat(o.computed_total) || 0
     }));
     res.json({ success: true, orders });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
-});
-
-router.get('/customers', async (req, res) => {
-  const { merchantId } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
-  try {
-    const result = await pool.query(`SELECT * FROM square_customers WHERE aervo_merchant_id = $1 ORDER BY created_at DESC LIMIT 500`, [merchantId]);
-    res.json({ success: true, customers: result.rows });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
