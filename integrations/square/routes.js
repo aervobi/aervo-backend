@@ -128,3 +128,53 @@ router.get('/appointments', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 module.exports = router;
+
+router.get('/customers/enriched', async (req, res) => {
+  const { merchantId, segment, search } = req.query;
+  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+  try {
+    let searchFilter = '';
+    if (search) searchFilter = `AND (c.given_name ILIKE $2 OR c.family_name ILIKE $2 OR c.email_address ILIKE $2)`;
+    const params = search ? [merchantId, `%${search}%`] : [merchantId];
+
+    const result = await pool.query(`
+      SELECT 
+        c.*,
+        COUNT(DISTINCT o.id) as visit_count,
+        COALESCE(SUM(li.gross_amount::numeric), 0) as total_spend,
+        MAX(o.created_at) as last_visit,
+        CASE 
+          WHEN COUNT(DISTINCT o.id) = 0 THEN 'no_visits'
+          WHEN MAX(o.created_at) < NOW() - INTERVAL '60 days' THEN 'at_risk'
+          WHEN COUNT(DISTINCT o.id) >= 3 THEN 'loyal'
+          WHEN c.created_at >= NOW() - INTERVAL '30 days' THEN 'new'
+          ELSE 'regular'
+        END as computed_segment,
+        COALESCE(SUM(li.gross_amount::numeric), 0) / NULLIF(COUNT(DISTINCT o.id), 0) as avg_spend
+      FROM square_customers c
+      LEFT JOIN square_orders o ON o.square_customer_id = c.square_customer_id 
+        AND o.aervo_merchant_id = c.aervo_merchant_id
+      LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
+      WHERE c.aervo_merchant_id = $1 ${searchFilter}
+      GROUP BY c.id
+      ORDER BY total_spend DESC
+    `, params);
+
+    // Deduplicate by email keeping highest spend
+    const seen = new Map();
+    result.rows.forEach(c => {
+      const key = c.email_address || c.square_customer_id;
+      if (!seen.has(key) || parseFloat(c.total_spend) > parseFloat(seen.get(key).total_spend)) {
+        seen.set(key, c);
+      }
+    });
+    const customers = Array.from(seen.values());
+
+    // Filter by segment if requested
+    const filtered = segment ? customers.filter(c => c.computed_segment === segment) : customers;
+
+    res.json({ success: true, customers: filtered });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
