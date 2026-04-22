@@ -132,15 +132,19 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
-    return res.send(`
+   const isStandaloneExisting = req.query.source === 'standalone';
+return res.send(`
   <html>
     <head>
       <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
     </head>
     <body>
       <script>
+        const isStandalone = ${isStandaloneExisting};
         const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}';
-        if (window.top !== window.self) {
+        if (isStandalone) {
+          window.location.href = redirectUrl;
+        } else if (window.top !== window.self) {
           window.top.location.href = redirectUrl;
         } else {
           window.location.href = redirectUrl;
@@ -155,11 +159,12 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
 
       const state = crypto.randomBytes(16).toString("hex");
 
-      await pool.query(
-        `INSERT INTO shopify_oauth_states (shop_origin, state, created_at)
-         VALUES ($1, $2, NOW())`,
-        [shop, state]
-      );
+      const source = req.query.source || 'shopify';
+await pool.query(
+  `INSERT INTO shopify_oauth_states (shop_origin, state, created_at, source)
+   VALUES ($1, $2, NOW(), $3)`,
+  [shop, state, source]
+);
 
       const redirectUri = `${APP_URL}/auth/shopify/callback`;
 
@@ -215,10 +220,10 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
 
       // Verify state
       const stateResult = await pool.query(
-        `SELECT 1 FROM shopify_oauth_states
-         WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
-        [shop, state]
-      );
+  `SELECT source FROM shopify_oauth_states
+   WHERE shop_origin = $1 AND state = $2 AND created_at > NOW() - INTERVAL '10 minutes'`,
+  [shop, state]
+);
 
       if (stateResult.rows.length === 0) {
         return res.status(400).send("Invalid or expired OAuth state.");
@@ -321,17 +326,30 @@ const token = jwt.sign(
   { expiresIn: "7d" }
 );
 
+const source = stateResult.rows[0]?.source || 'shopify';
+const isStandalone = source === 'standalone';
+
 return res.send(`
   <html>
     <head>
-      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
     </head>
     <body>
       <script>
-window.location.href = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}&standalone=1';      </script>
+        const isStandalone = ${isStandalone};
+        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}';
+        if (isStandalone) {
+          window.location.href = redirectUrl;
+        } else if (window.top !== window.self) {
+          window.top.location.href = redirectUrl;
+        } else {
+          window.location.href = redirectUrl;
+        }
+      </script>
+      <p>Redirecting to Aervo...</p>
     </body>
   </html>
-`); 
+`);
     } catch (err) {
       console.error("OAuth callback error:", err);
       return res.status(500).send("OAuth callback failed.");
