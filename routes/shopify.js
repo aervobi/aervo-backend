@@ -141,7 +141,7 @@ return res.send(`
     <body>
       <script>
         const isStandalone = ${isStandaloneExisting};
-        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}';
+        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}${isStandaloneExisting ? "&standalone=1" : ""}';
         if (isStandalone) {
           window.location.href = redirectUrl;
         } else if (window.top !== window.self) {
@@ -337,7 +337,7 @@ return res.send(`
     <body>
       <script>
         const isStandalone = ${isStandalone};
-        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}';
+        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?connected=1&shop=${encodeURIComponent(shop)}&token=${token}${isStandalone ? "&standalone=1" : ""}';
         if (isStandalone) {
           window.location.href = redirectUrl;
         } else if (window.top !== window.self) {
