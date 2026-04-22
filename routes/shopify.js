@@ -133,14 +133,23 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
       { expiresIn: "7d" }
     );
     return res.send(`
-      <html>
-        <body>
-          <script>
-            window.location.href = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}';
-          </script>
-        </body>
-      </html>
-    `);
+  <html>
+    <head>
+      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
+    </head>
+    <body>
+      <script>
+        const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?shop=${encodeURIComponent(shop)}&token=${token}&host=${req.query.host || ""}';
+        if (window.top !== window.self) {
+          window.top.location.href = redirectUrl;
+        } else {
+          window.location.href = redirectUrl;
+        }
+      </script>
+      <p>Redirecting to Aervo...</p>
+    </body>
+  </html>
+`);
   }
 }
 
@@ -161,7 +170,23 @@ if (existingShop.rows.length > 0 && existingShop.rows[0].access_token) {
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&state=${state}`;
 
-      return res.redirect(installUrl);
+      return res.send(`
+  <html>
+    <head>
+      <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
+    </head>
+    <body>
+      <script>
+        if (window.top !== window.self) {
+          window.top.location.href = '${installUrl}';
+        } else {
+          window.location.href = '${installUrl}';
+        }
+      </script>
+      <p>Redirecting to Shopify...</p>
+    </body>
+  </html>
+`);
     } catch (err) {
       console.error("OAuth initiation error:", err);
       return res.status(500).send("OAuth failed to start.");
