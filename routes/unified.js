@@ -39,22 +39,21 @@ router.get("/overview", authenticateToken, async (req, res) => {
     // Square data
     if (platform === "square" || platform === "both") {
       try {
-        console.log("Querying Square for merchantId:", merchantId, typeof merchantId);
         const [ordersRes, customersRes] = await Promise.all([
           pool.query(
-            `SELECT COALESCE(SUM(total_money), 0) as revenue, COUNT(*) as count
-             FROM square_orders WHERE merchant_id = $1`,
+            `SELECT COALESCE(SUM(li.gross_amount::numeric), 0) as revenue, COUNT(DISTINCT o.id) as count
+             FROM square_orders o
+             LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
+             WHERE o.aervo_merchant_id = $1`,
             [merchantId]
           ),
           pool.query(
-            `SELECT COUNT(DISTINCT id) as count FROM square_customers WHERE merchant_id = $1`,
+            `SELECT COUNT(DISTINCT id) as count FROM square_customers WHERE aervo_merchant_id = $1`,
             [merchantId]
           )
         ]);
-        console.log("Square orders result:", ordersRes.rows[0]);
-        console.log("Square customers result:", customersRes.rows[0]);
 
-        const squareRevenue = parseFloat(ordersRes.rows[0].revenue) / 100;
+        const squareRevenue = parseFloat(ordersRes.rows[0].revenue);
         const squareOrders = parseInt(ordersRes.rows[0].count);
         const squareCustomers = parseInt(customersRes.rows[0].count);
 
@@ -65,37 +64,6 @@ router.get("/overview", authenticateToken, async (req, res) => {
         sources.push({ name: "Square", revenue: squareRevenue, orders: squareOrders, customers: squareCustomers });
       } catch (e) {
         console.error("Square unified error:", e.message);
-      }
-    }
-
-    // Shopify data
-    if (platform === "shopify" || platform === "both") {
-      try {
-        const [ordersRes, customersRes] = await Promise.all([
-          pool.query(
-            `SELECT COALESCE(SUM(total_price::numeric), 0) as revenue, COUNT(*) as count
-             FROM shopify_orders WHERE merchant_id = $1`,
-            [merchantId]
-          ),
-          pool.query(
-            `SELECT COUNT(DISTINCT id) as count FROM shopify_customers WHERE merchant_id = $1`,
-            [merchantId]
-          )
-        ]);
-        console.log("Shopify orders result:", ordersRes.rows[0]);
-        console.log("Shopify customers result:", customersRes.rows[0]);
-
-        const shopifyRevenue = parseFloat(ordersRes.rows[0].revenue);
-        const shopifyOrders = parseInt(ordersRes.rows[0].count);
-        const shopifyCustomers = parseInt(customersRes.rows[0].count);
-
-        totalRevenue += shopifyRevenue;
-        totalOrders += shopifyOrders;
-        totalCustomers += shopifyCustomers;
-
-        sources.push({ name: "Shopify", revenue: shopifyRevenue, orders: shopifyOrders, customers: shopifyCustomers });
-      } catch (e) {
-        console.error("Shopify unified error:", e.message);
       }
     }
 
