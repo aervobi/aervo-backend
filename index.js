@@ -224,6 +224,9 @@ app.use("/", onboardingRoutes);
 const userRoutes = require("./routes/user")(pool, authenticateToken);
 app.use("/", userRoutes);
 
+const unifiedRoutes = require("./routes/unified");
+app.use("/api/unified", unifiedRoutes);
+
 // Reports routes
 const reportsRoutes = require("./routes/reports")(pool, authenticateToken);
 app.use("/", reportsRoutes);
