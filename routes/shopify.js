@@ -419,7 +419,6 @@ router.get("/billing/plans", async (req, res) => {
 });
 
 // GET /auth/shopify/billing/upgrade/:plan
-// Creates a RecurringApplicationCharge and redirects to Shopify confirmation
 router.get("/billing/upgrade/:plan", async (req, res) => {
   try {
     const planKey = req.params.plan;
@@ -439,10 +438,10 @@ router.get("/billing/upgrade/:plan", async (req, res) => {
       return res.status(401).json({ success: false, message: "Shop not connected" });
     }
 
-    const confirmUrl = `${APP_URL}/auth/shopify/billing/confirm?shop=${encodeURIComponent(shop)}&plan=${planKey}`;
+    const returnUrl = `${APP_URL}/auth/shopify/billing/confirm?shop=${encodeURIComponent(shop)}&plan=${planKey}`;
 
-    const chargeResponse = await fetch(
-      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/recurring_application_charges.json`,
+    const graphqlResponse = await fetch(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
       {
         method: "POST",
         headers: {
@@ -450,34 +449,65 @@ router.get("/billing/upgrade/:plan", async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          recurring_application_charge: {
+          query: `
+            mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $lineItems: [AppSubscriptionLineItemInput!]!) {
+              appSubscriptionCreate(name: $name, returnUrl: $returnUrl, test: $test, lineItems: $lineItems) {
+                appSubscription {
+                  id
+                  status
+                }
+                confirmationUrl
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `,
+          variables: {
             name: plan.name,
-            price: plan.price,
-            return_url: confirmUrl,
-            trial_days: plan.trialDays,
+            returnUrl: returnUrl,
             test: true,
-          },
+            lineItems: [
+              {
+                plan: {
+                  appRecurringPricingDetails: {
+                    price: {
+                      amount: plan.price,
+                      currencyCode: "USD"
+                    },
+                    interval: "EVERY_30_DAYS"
+                  }
+                }
+              }
+            ]
+          }
         }),
       }
     );
 
-    const chargeText = await chargeResponse.text();
-    console.log("Charge response status:", chargeResponse.status);
-    console.log("Charge response body:", chargeText);
+    const responseText = await graphqlResponse.text();
+    console.log("GraphQL billing response:", responseText);
 
-    if (!chargeResponse.ok || !chargeText) {
-      return res.status(500).json({ success: false, message: "Failed to create charge", detail: chargeText });
+    const data = JSON.parse(responseText);
+
+    if (data.errors) {
+      console.error("GraphQL errors:", data.errors);
+      return res.status(500).json({ success: false, message: "Billing error", detail: data.errors });
     }
 
-    const chargeData = JSON.parse(chargeText);
-    
+    const result = data.data?.appSubscriptionCreate;
 
-    if (!chargeResponse.ok || !chargeData.recurring_application_charge) {
-      console.error("Charge creation failed:", chargeData);
-      return res.status(500).json({ success: false, message: "Failed to create charge" });
+    if (result?.userErrors?.length > 0) {
+      console.error("User errors:", result.userErrors);
+      return res.status(400).json({ success: false, message: result.userErrors[0].message });
     }
 
-    const confirmationUrl = chargeData.recurring_application_charge.confirmation_url;
+    const confirmationUrl = result?.confirmationUrl;
+    if (!confirmationUrl) {
+      return res.status(500).json({ success: false, message: "No confirmation URL returned" });
+    }
+
     return res.redirect(confirmationUrl);
 
   } catch (err) {
