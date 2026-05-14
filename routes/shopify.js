@@ -395,6 +395,160 @@ router.post("/session-token", async (req, res) => {
     return res.status(401).json({ success: false, message: "Invalid session token" });
   }
 });
+// =========================
+// Billing API
+// =========================
+
+const BILLING_PLANS = {
+  essential: { name: "Aervo Essential", price: "19.00", trialDays: 0 },
+  pro:       { name: "Aervo Pro",       price: "49.00", trialDays: 14 },
+  business:  { name: "Aervo Business",  price: "99.00", trialDays: 0 },
+};
+
+async function getShopAccessToken(shop) {
+  const result = await pool.query(
+    "SELECT access_token FROM shops WHERE shop_origin = $1",
+    [shop]
+  );
+  return result.rows[0]?.access_token || null;
+}
+
+// GET /auth/shopify/billing/plans
+router.get("/billing/plans", async (req, res) => {
+  return res.json({ success: true, plans: BILLING_PLANS });
+});
+
+// GET /auth/shopify/billing/upgrade/:plan
+// Creates a RecurringApplicationCharge and redirects to Shopify confirmation
+router.get("/billing/upgrade/:plan", async (req, res) => {
+  try {
+    const planKey = req.params.plan;
+    const shop = String(req.query.shop || "").trim().toLowerCase();
+
+    if (!shop || !shop.endsWith(".myshopify.com")) {
+      return res.status(400).json({ success: false, message: "Invalid shop" });
+    }
+
+    const plan = BILLING_PLANS[planKey];
+    if (!plan) {
+      return res.status(400).json({ success: false, message: "Invalid plan" });
+    }
+
+    const accessToken = await getShopAccessToken(shop);
+    if (!accessToken) {
+      return res.status(401).json({ success: false, message: "Shop not connected" });
+    }
+
+    const confirmUrl = `${APP_URL}/auth/shopify/billing/confirm?shop=${encodeURIComponent(shop)}&plan=${planKey}`;
+
+    const chargeResponse = await fetch(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/recurring_application_charges.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recurring_application_charge: {
+            name: plan.name,
+            price: plan.price,
+            return_url: confirmUrl,
+            trial_days: plan.trialDays,
+            test: process.env.NODE_ENV !== "production",
+          },
+        }),
+      }
+    );
+
+    const chargeData = await chargeResponse.json();
+
+    if (!chargeResponse.ok || !chargeData.recurring_application_charge) {
+      console.error("Charge creation failed:", chargeData);
+      return res.status(500).json({ success: false, message: "Failed to create charge" });
+    }
+
+    const confirmationUrl = chargeData.recurring_application_charge.confirmation_url;
+    return res.redirect(confirmationUrl);
+
+  } catch (err) {
+    console.error("Billing upgrade error:", err);
+    return res.status(500).json({ success: false, message: "Billing error" });
+  }
+});
+
+// GET /auth/shopify/billing/confirm
+// Shopify redirects here after merchant approves the charge
+router.get("/billing/confirm", async (req, res) => {
+  try {
+    const shop = String(req.query.shop || "").trim().toLowerCase();
+    const planKey = String(req.query.plan || "").trim();
+    const chargeId = String(req.query.charge_id || "").trim();
+
+    if (!shop || !planKey || !chargeId) {
+      return res.status(400).send("Missing required parameters.");
+    }
+
+    const accessToken = await getShopAccessToken(shop);
+    if (!accessToken) {
+      return res.status(401).send("Shop not connected.");
+    }
+
+    // Activate the charge
+    const activateResponse = await fetch(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/recurring_application_charges/${chargeId}/activate.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recurring_application_charge: { id: chargeId }
+        }),
+      }
+    );
+
+    if (!activateResponse.ok) {
+      const errText = await activateResponse.text();
+      console.error("Charge activation failed:", errText);
+      return res.status(500).send("Failed to activate charge.");
+    }
+
+    // Update user plan in database
+    await pool.query(
+      `UPDATE users SET plan = $1
+       WHERE id = (SELECT user_id FROM shops WHERE shop_origin = $2)`,
+      [planKey, shop]
+    );
+
+    console.log(`✅ Plan updated to ${planKey} for ${shop}`);
+
+    // Redirect back to dashboard
+    return res.send(`
+      <html>
+        <head>
+          <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
+        </head>
+        <body>
+          <script>
+            const redirectUrl = '${FRONTEND_URL}/dashboard/shopify?upgraded=1&plan=${planKey}';
+            if (window.top !== window.self) {
+              window.top.location.href = redirectUrl;
+            } else {
+              window.location.href = redirectUrl;
+            }
+          </script>
+          <p>Activating your plan...</p>
+        </body>
+      </html>
+    `);
+
+  } catch (err) {
+    console.error("Billing confirm error:", err);
+    return res.status(500).send("Billing confirmation failed.");
+  }
+});
 
   return router;
 };
