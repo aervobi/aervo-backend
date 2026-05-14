@@ -95,6 +95,7 @@ module.exports = (pool, authenticateToken) => {
     companyLogoUrl: user.company_logo_url,
     createdAt:      user.created_at,
     lastLogin:      user.last_login,
+    plan:           user.plan || 'free',
   },
   shop: activeStore ? {
     shopOrigin:  activeStore.store_origin,
