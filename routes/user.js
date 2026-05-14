@@ -37,7 +37,7 @@ module.exports = (pool, authenticateToken) => {
         `SELECT id, email, company_name, name, role, email_verified,
                 avatar_url, business_type, location, google_id, company_logo_url,
                 CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN true ELSE false END AS has_password,
-                created_at, last_login, onboarded, platform
+                created_at, last_login, onboarded, platform, plan
          FROM users WHERE id = $1`,
         [req.user.userId]
       );
