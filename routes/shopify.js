@@ -455,13 +455,22 @@ router.get("/billing/upgrade/:plan", async (req, res) => {
             price: plan.price,
             return_url: confirmUrl,
             trial_days: plan.trialDays,
-            test: process.env.NODE_ENV !== "production",
+            test: true,
           },
         }),
       }
     );
 
-    const chargeData = await chargeResponse.json();
+    const chargeText = await chargeResponse.text();
+    console.log("Charge response status:", chargeResponse.status);
+    console.log("Charge response body:", chargeText);
+
+    if (!chargeResponse.ok || !chargeText) {
+      return res.status(500).json({ success: false, message: "Failed to create charge", detail: chargeText });
+    }
+
+    const chargeData = JSON.parse(chargeText);
+    
 
     if (!chargeResponse.ok || !chargeData.recurring_application_charge) {
       console.error("Charge creation failed:", chargeData);
