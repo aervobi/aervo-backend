@@ -24,7 +24,7 @@ router.post("/chat", async (req, res) => {
         ),
         pool.query(
           `SELECT COUNT(*) as total_orders,
-                  AVG(total_money) as avg_order_value,
+                  AVG(total_amount) as avg_order_value,
                   DATE_TRUNC('month', created_at) as month,
                   COUNT(*) as monthly_orders
            FROM square_orders
