@@ -257,6 +257,10 @@ app.get("/dashboard/csv", (req, res) => {
   res.sendFile(path.join(__dirname, "../aervo/dashboard/csv/index.html"));
 });
 
+//ai routes 
+const aiRoutes = require("./routes/ai");
+app.use("/api/ai", aiRoutes);
+
 // ============================================================
 // UPDATE your /dashboard route to redirect based on platform
 // ============================================================
