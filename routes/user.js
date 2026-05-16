@@ -34,13 +34,14 @@ module.exports = (pool, authenticateToken) => {
   router.get("/api/user/me", authenticateToken, async (req, res) => {
     try {
       const result = await pool.query(
-        `SELECT id, email, company_name, name, role, email_verified,
-                avatar_url, business_type, location, google_id, company_logo_url,
-                CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN true ELSE false END AS has_password,
-                created_at, last_login, onboarded, platform, plan
-         FROM users WHERE id = $1`,
-        [req.user.userId]
-      );
+  `SELECT u.id, u.email, u.company_name, u.name, u.role, u.email_verified,
+          u.avatar_url, u.business_type, u.location, u.google_id, u.company_logo_url,
+          CASE WHEN u.password_hash IS NOT NULL AND u.password_hash != '' THEN true ELSE false END AS has_password,
+          u.created_at, u.last_login, u.onboarded, u.platform, u.plan,
+          (SELECT aervo_merchant_id FROM square_connections WHERE aervo_merchant_id = u.id::text LIMIT 1) as square_merchant_id
+   FROM users u WHERE u.id = $1`,
+  [req.user.userId]
+);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ success: false, message: "User not found" });
@@ -96,6 +97,7 @@ module.exports = (pool, authenticateToken) => {
     createdAt:      user.created_at,
     lastLogin:      user.last_login,
     plan:           user.plan || 'free',
+    squareMerchantId: user.square_merchant_id,
   },
   shop: activeStore ? {
     shopOrigin:  activeStore.store_origin,
