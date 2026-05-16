@@ -127,6 +127,44 @@ router.get('/appointments', async (req, res) => {
     res.json({ success: true, appointments: result.rows });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
+router.get('/top-items', async (req, res) => {
+  const { merchantId } = req.query;
+
+  if (!merchantId) {
+    return res.status(400).json({ error: "merchantId is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+        name,
+        SUM(quantity) as total_quantity,
+        SUM(gross_amount) as total_revenue,
+        COUNT(DISTINCT square_order_id) as total_orders
+       FROM square_order_line_items
+       WHERE aervo_merchant_id = $1
+         AND name IS NOT NULL
+         AND name != ''
+       GROUP BY name
+       ORDER BY total_orders DESC
+       LIMIT 10`,
+      [merchantId]
+    );
+
+    const items = result.rows.map(r => ({
+      name: r.name,
+      quantity: parseFloat(r.total_quantity),
+      revenue: parseFloat(r.total_revenue) / 100,
+      orders: parseInt(r.total_orders)
+    }));
+
+    res.json({ success: true, items });
+  } catch (err) {
+    console.error("Top items error:", err);
+    res.status(500).json({ error: "Failed to fetch top items" });
+  }
+});
+
 module.exports = router;
 
 router.get('/customers/enriched', async (req, res) => {
