@@ -261,6 +261,10 @@ app.get("/dashboard/csv", (req, res) => {
 const aiRoutes = require("./routes/ai");
 app.use("/api/ai", aiRoutes);
 
+//Inventory Management routes 
+const imsRoutes = require('./routes/ims');
+app.use('/api/ims', imsRoutes);
+
 // ============================================================
 // UPDATE your /dashboard route to redirect based on platform
 // ============================================================
