@@ -36,7 +36,7 @@ router.post("/chat", async (req, res) => {
         ),
         pool.query(
           `SELECT COUNT(*) as total_customers,
-                  COUNT(CASE WHEN visit_count > 1 THEN 1 END) as returning_customers
+                  COUNT(CASE WHEN total_visit_count > 1 THEN 1 END) as returning_customers
            FROM square_customers
            WHERE aervo_merchant_id = $1`,
           [merchantId]
