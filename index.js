@@ -263,7 +263,7 @@ app.use("/api/ai", aiRoutes);
 
 //Inventory Management routes 
 const imsRoutes = require('./routes/ims');
-app.use('/api/ims', imsRoutes);
+app.use('/api/ims', imsRoutes(pool));
 
 // ============================================================
 // UPDATE your /dashboard route to redirect based on platform
