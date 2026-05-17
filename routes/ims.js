@@ -289,6 +289,22 @@ module.exports = function(pool) {
     }
   });
 
+  router.put('/expenses/:id', async (req, res) => {
+  const { id } = req.params;
+  const { category, description, amount, expense_date } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE aervo_expenses
+       SET category=$1, description=$2, amount=$3, expense_date=$4
+       WHERE id=$5 RETURNING *`,
+      [category, description, amount, expense_date, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
   router.delete('/expenses/:id', async (req, res) => {
     const { id } = req.params;
     try {
