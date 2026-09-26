@@ -247,6 +247,10 @@ app.use("/", stickyRoutes);
 const playbooksRoutes = require("./routes/playbooks")(pool, authenticateToken);
 app.use("/", playbooksRoutes);
 
+// QuickBooks integration routes
+const quickbooksAuthRoutes = require("./routes/quickbooks/auth")(pool, authenticateToken);
+app.use("/", quickbooksAuthRoutes);
+
 // Intelligence Center
 app.get("/intelligence", (req, res) => {
   res.sendFile(path.join(__dirname, "../aervo/intelligence.html"));
