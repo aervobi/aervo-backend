@@ -217,6 +217,10 @@ app.use("/stripe", stripeRoutes);
 const googleRoutes = require("./routes/google");
 app.use("/", googleRoutes);
 
+// Google Reviews (Places API)
+const googleReviewsRoutes = require("./routes/googleReviews")(pool, authenticateToken);
+app.use("/", googleReviewsRoutes);
+
 // Onboarding routes
 const onboardingRoutes = require("./routes/onboarding");
 app.use("/", onboardingRoutes);
