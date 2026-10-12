@@ -184,7 +184,7 @@ Example format:
 // ============================================================
 
 router.get('/api/playbooks', authenticateToken, async (req, res) => {
-  const userId      = req.user.id;
+  const userId      = req.user.userId;
   const integration = req.query.integration || 'shopify';
 
   try {
@@ -276,7 +276,7 @@ router.get('/api/playbooks', authenticateToken, async (req, res) => {
 // Toggle a single step complete/incomplete.
 
 router.patch('/api/playbooks/steps/:stepId/complete', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user.userId;
   const { stepId } = req.params;
   const { is_complete } = req.body;
 
@@ -330,7 +330,7 @@ router.patch('/api/playbooks/steps/:stepId/complete', authenticateToken, async (
 // Dismiss an active playbook.
 
 router.patch('/api/playbooks/:id/dismiss', authenticateToken, async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user.userId;
   const { id } = req.params;
 
   try {

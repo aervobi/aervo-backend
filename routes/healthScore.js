@@ -29,7 +29,15 @@ module.exports = (pool, authenticateToken) => {
   // ── POST /api/health-score/calculate ─────────────────────────
 router.post("/api/health-score/calculate", authenticateToken, async (req, res) => {
   try {
-    const { shopOrigin, merchantId } = req.body;
+    const { shopOrigin } = req.body;
+    // Square data is keyed by the caller's own id; a different id is refused.
+    let { merchantId } = req.body;
+    if (merchantId) {
+      if (String(merchantId) !== String(req.user.userId)) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      merchantId = String(req.user.userId);
+    }
 
     let currentOrders = [], prevOrders = [], products = [];
     let platform = null;

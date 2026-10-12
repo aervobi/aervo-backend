@@ -3,12 +3,18 @@ const router = express.Router();
 const { pool } = require('../db');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_me';
+const { JWT_SECRET } = require('../middleware/auth');
 
 router.post('/api/onboarding', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
+    if (!token) return res.status(401).json({ success: false, message: 'Authentication required' });
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (e) {
+      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+    }
     const { company_name, business_type, role, platform, shopify_url, location } = req.body;
 
     await pool.query(

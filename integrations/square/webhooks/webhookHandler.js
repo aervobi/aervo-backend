@@ -11,14 +11,18 @@ const { pool } = require('../../../db');
 function verifyWebhookSignature(body, signature, notificationUrl) {
   const signingKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
   if (!signingKey) {
-    console.warn('SQUARE_WEBHOOK_SIGNATURE_KEY not set — skipping signature verification');
-    return true;
+    // Fail closed: without the key anyone could post fake events for any merchant.
+    console.error('SQUARE_WEBHOOK_SIGNATURE_KEY not set - rejecting webhook');
+    return false;
   }
-  const payload = notificationUrl + body;
-  const hmac = crypto.createHmac('sha256', signingKey);
-  hmac.update(payload);
-  const expected = hmac.digest('base64');
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!signature || typeof body !== 'string') return false;
+  const expected = crypto
+    .createHmac('sha256', signingKey)
+    .update(notificationUrl + body)
+    .digest('base64');
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 async function handleWebhookEvent(req, res) {
@@ -31,10 +35,19 @@ async function handleWebhookEvent(req, res) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
+  // The raw-body middleware switches the content type to text/plain so the JSON
+  // parser skips this route, which leaves req.body empty. Parse the verified body.
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+
   res.status(200).json({ received: true });
 
-  processEvent(req.body).catch((err) =>
-    console.error('Webhook processing failed', { error: err.message, event: req.body?.type })
+  processEvent(event).catch((err) =>
+    console.error('Webhook processing failed', { error: err.message, event: event?.type })
   );
 }
 

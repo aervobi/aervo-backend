@@ -15,7 +15,7 @@ const oauth2Client = new google.auth.OAuth2(
   REDIRECT_URL
 );
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_me';
+const { JWT_SECRET } = require('../middleware/auth');
 
 // ============= GOOGLE SIGN IN - Get auth URL =============
 router.get('/auth/google', (req, res) => {

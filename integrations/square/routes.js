@@ -1,23 +1,31 @@
 // integrations/square/routes.js
 const express = require('express');
-const router = express.Router();
+const { ownMerchantId, rejectForeignId } = require('../../middleware/auth');
 
 const { handleConnectRequest, handleOAuthCallback } = require('./auth/oauth');
 const { handleWebhookEvent } = require('./webhooks/webhookHandler');
 const { deleteTokens, getTokensByMerchant } = require('./auth/tokenStore');
 const { pool } = require('../../db');
 
+// Square data is keyed by aervo_merchant_id, which is the Aervo user id. It is
+// always taken from the verified login token, never from the URL or body; a
+// client that sends a different merchantId is refused.
+module.exports = function squareRoutes(authenticateToken) {
+const router = express.Router();
+
 // ── OAuth Flow ────────────────────────────────────────────────────────────────
-router.get('/connect', handleConnectRequest);
-router.get('/callback', handleOAuthCallback);
+// A plain link can't carry the Authorization header, so the frontend calls this
+// with an authenticated fetch and then navigates to the returned URL.
+router.post('/connect', authenticateToken, handleConnectRequest);
+router.get('/callback', handleOAuthCallback); // verified by the one-time state issued above
 
 // ── Webhooks ──────────────────────────────────────────────────────────────────
 router.post('/webhooks', handleWebhookEvent);
 
 // ── Status ────────────────────────────────────────────────────────────────────
-router.get('/status', async (req, res) => {
-  const { merchantId } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.get('/status', authenticateToken, async (req, res) => {
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
 
   try {
     const tokens = await getTokensByMerchant(merchantId);
@@ -55,9 +63,9 @@ router.get('/status', async (req, res) => {
 });
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
-router.delete('/disconnect', async (req, res) => {
-  const { merchantId } = req.body;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.delete('/disconnect', authenticateToken, async (req, res) => {
+  if (rejectForeignId(req, res, req.body && req.body.merchantId)) return;
+  const merchantId = ownMerchantId(req);
 
   try {
     await deleteTokens(merchantId);
@@ -68,18 +76,19 @@ router.delete('/disconnect', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-router.get('/locations', async (req, res) => {
-  const { merchantId } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.get('/locations', authenticateToken, async (req, res) => {
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
   try {
     const result = await pool.query(`SELECT * FROM square_locations WHERE aervo_merchant_id = $1 ORDER BY name`, [merchantId]);
     res.json({ success: true, locations: result.rows });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  } catch (err) { console.error('Square route error', err.message); res.status(500).json({ success: false, message: 'Something went wrong' }); }
 });
 
-router.get('/orders', async (req, res) => {
-  const { merchantId, filter, service } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.get('/orders', authenticateToken, async (req, res) => {
+  const { filter, service } = req.query;
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
   try {
     let dateFilter = '';
     if (filter === 'today') dateFilter = `AND o.created_at >= CURRENT_DATE`;
@@ -116,23 +125,20 @@ router.get('/orders', async (req, res) => {
       total_amount: parseFloat(o.computed_total) || 0
     }));
     res.json({ success: true, orders });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  } catch (err) { console.error('Square route error', err.message); res.status(500).json({ success: false, message: 'Something went wrong' }); }
 });
 
-router.get('/appointments', async (req, res) => {
-  const { merchantId } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.get('/appointments', authenticateToken, async (req, res) => {
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
   try {
     const result = await pool.query(`SELECT * FROM square_appointments WHERE aervo_merchant_id = $1 ORDER BY start_at DESC LIMIT 200`, [merchantId]);
     res.json({ success: true, appointments: result.rows });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  } catch (err) { console.error('Square route error', err.message); res.status(500).json({ success: false, message: 'Something went wrong' }); }
 });
-router.get('/top-items', async (req, res) => {
-  const { merchantId } = req.query;
-
-  if (!merchantId) {
-    return res.status(400).json({ error: "merchantId is required" });
-  }
+router.get('/top-items', authenticateToken, async (req, res) => {
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
 
   try {
     const result = await pool.query(
@@ -165,11 +171,10 @@ router.get('/top-items', async (req, res) => {
   }
 });
 
-module.exports = router;
-
-router.get('/customers/enriched', async (req, res) => {
-  const { merchantId, segment, search } = req.query;
-  if (!merchantId) return res.status(400).json({ error: 'merchantId required' });
+router.get('/customers/enriched', authenticateToken, async (req, res) => {
+  const { segment, search } = req.query;
+  if (rejectForeignId(req, res, req.query.merchantId)) return;
+  const merchantId = ownMerchantId(req);
   try {
     let searchFilter = '';
     if (search) searchFilter = `AND (c.given_name ILIKE $2 OR c.family_name ILIKE $2 OR c.email_address ILIKE $2)`;
@@ -213,6 +218,10 @@ router.get('/customers/enriched', async (req, res) => {
 
     res.json({ success: true, customers: filtered });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error('Square route error', err.message);
+    res.status(500).json({ success: false, message: 'Something went wrong' });
   }
 });
+
+return router;
+};

@@ -1,7 +1,28 @@
 const express = require('express');
 
-module.exports = function(pool) {
+module.exports = function(pool, authenticateToken) {
   const router = express.Router();
+
+  // Every IMS route requires a login, and the merchant is always the logged-in
+  // user. A client that sends a different merchant_id is refused; one that
+  // sends none (or its own) is handled identically, so existing pages keep working.
+  router.use(authenticateToken);
+  router.use((req, res, next) => {
+    const own = req.user.userId;
+    const supplied = req.query.merchant_id ?? (req.body && req.body.merchant_id);
+    if (supplied !== undefined && supplied !== null && supplied !== '' && String(supplied) !== String(own)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    req.query.merchant_id = String(own);
+    if (req.body && typeof req.body === 'object') req.body.merchant_id = own;
+    next();
+  });
+
+  // Log the real error, return a generic one (no SQL/internal detail to clients).
+  const fail = (res, err) => {
+    console.error('IMS error:', err.message);
+    res.status(500).json({ error: 'Something went wrong' });
+  };
 
   // ─── PRODUCTS ───────────────────────────────────────────
 
@@ -18,7 +39,7 @@ module.exports = function(pool) {
       );
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -47,7 +68,7 @@ module.exports = function(pool) {
       res.status(201).json(product);
     } catch (err) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     } finally {
       client.release();
     }
@@ -61,22 +82,27 @@ module.exports = function(pool) {
         `UPDATE aervo_products
          SET name=$1, sku=$2, category=$3, description=$4,
              sale_price=$5, cost_price=$6, unit=$7, is_service=$8, updated_at=NOW()
-         WHERE id=$9 RETURNING *`,
-        [name, sku, category, description, sale_price, cost_price, unit, is_service, id]
+         WHERE id=$9 AND merchant_id=$10 RETURNING *`,
+        [name, sku, category, description, sale_price, cost_price, unit, is_service, id, req.body.merchant_id]
       );
+      if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
       res.json(result.rows[0]);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
   router.delete('/products/:id', async (req, res) => {
     const { id } = req.params;
     try {
-      await pool.query(`UPDATE aervo_products SET is_active=FALSE WHERE id=$1`, [id]);
+      const result = await pool.query(
+        `UPDATE aervo_products SET is_active=FALSE WHERE id=$1 AND merchant_id=$2`,
+        [id, req.query.merchant_id]
+      );
+      if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -84,15 +110,20 @@ module.exports = function(pool) {
 
   router.post('/inventory/adjust', async (req, res) => {
     const { merchant_id, product_id, adjustment, reason } = req.body;
+    if (!Number.isFinite(Number(adjustment))) return res.status(400).json({ error: 'Invalid adjustment' });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
+      const updated = await client.query(
         `UPDATE aervo_inventory
          SET quantity = quantity + $1, last_updated = NOW()
-         WHERE product_id = $2`,
-        [adjustment, product_id]
+         WHERE product_id = $2 AND merchant_id = $3`,
+        [adjustment, product_id, merchant_id]
       );
+      if (updated.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Not found' });
+      }
       await client.query(
         `INSERT INTO aervo_inventory_adjustments (merchant_id, product_id, adjustment, reason)
          VALUES ($1, $2, $3, $4)`,
@@ -102,7 +133,7 @@ module.exports = function(pool) {
       res.json({ success: true });
     } catch (err) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     } finally {
       client.release();
     }
@@ -121,7 +152,7 @@ module.exports = function(pool) {
       );
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -143,7 +174,7 @@ module.exports = function(pool) {
       );
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -157,7 +188,7 @@ module.exports = function(pool) {
       );
       res.status(201).json(result.rows[0]);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -168,12 +199,13 @@ module.exports = function(pool) {
       const result = await pool.query(
         `UPDATE aervo_customers
          SET first_name=$1, last_name=$2, email=$3, phone=$4, notes=$5, updated_at=NOW()
-         WHERE id=$6 RETURNING *`,
-        [first_name, last_name, email, phone, notes, id]
+         WHERE id=$6 AND merchant_id=$7 RETURNING *`,
+        [first_name, last_name, email, phone, notes, id, req.body.merchant_id]
       );
+      if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
       res.json(result.rows[0]);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -205,14 +237,43 @@ module.exports = function(pool) {
       );
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
   router.post('/sales', async (req, res) => {
     const { merchant_id, customer_id, items, payment_method, notes, sale_date } = req.body;
+    const validItems =
+      Array.isArray(items) &&
+      items.length > 0 &&
+      items.every(
+        (i) =>
+          Number(i.product_id) > 0 &&
+          Number.isFinite(Number(i.quantity)) && Number(i.quantity) > 0 &&
+          Number.isFinite(Number(i.unit_price)) && Number(i.unit_price) >= 0 &&
+          Number.isFinite(Number(i.unit_cost)) && Number(i.unit_cost) >= 0
+      );
+    if (!validItems) return res.status(400).json({ error: 'Invalid sale items' });
     const client = await pool.connect();
     try {
+      // Everything referenced must belong to this merchant
+      const ids = [...new Set(items.map((i) => Number(i.product_id)))];
+      const owned = await client.query(
+        `SELECT COUNT(*)::int AS n FROM aervo_products WHERE id = ANY($1::int[]) AND merchant_id = $2`,
+        [ids, merchant_id]
+      );
+      if (owned.rows[0].n !== ids.length) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      if (customer_id) {
+        const c = await client.query(
+          `SELECT 1 FROM aervo_customers WHERE id = $1 AND merchant_id = $2`,
+          [customer_id, merchant_id]
+        );
+        if (c.rows.length === 0) {
+          return res.status(404).json({ error: 'Customer not found' });
+        }
+      }
       await client.query('BEGIN');
 
       const total_amount = items.reduce((sum, i) => sum + i.quantity * i.unit_price, 0);
@@ -236,8 +297,8 @@ module.exports = function(pool) {
         await client.query(
           `UPDATE aervo_inventory
            SET quantity = quantity - $1, last_updated = NOW()
-           WHERE product_id = $2`,
-          [item.quantity, item.product_id]
+           WHERE product_id = $2 AND merchant_id = $3`,
+          [item.quantity, item.product_id, merchant_id]
         );
         await client.query(
           `INSERT INTO aervo_inventory_adjustments (merchant_id, product_id, adjustment, reason, reference_id)
@@ -250,7 +311,7 @@ module.exports = function(pool) {
       res.status(201).json(sale);
     } catch (err) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     } finally {
       client.release();
     }
@@ -271,7 +332,7 @@ module.exports = function(pool) {
       );
       res.json(result.rows);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -285,7 +346,7 @@ module.exports = function(pool) {
       );
       res.status(201).json(result.rows[0]);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -296,22 +357,27 @@ module.exports = function(pool) {
     const result = await pool.query(
       `UPDATE aervo_expenses
        SET category=$1, description=$2, amount=$3, expense_date=$4
-       WHERE id=$5 RETURNING *`,
-      [category, description, amount, expense_date, id]
+       WHERE id=$5 AND merchant_id=$6 RETURNING *`,
+      [category, description, amount, expense_date, id, req.body.merchant_id]
     );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    fail(res, err);
   }
 });
 
   router.delete('/expenses/:id', async (req, res) => {
     const { id } = req.params;
     try {
-      await pool.query(`DELETE FROM aervo_expenses WHERE id=$1`, [id]);
+      const result = await pool.query(
+        `DELETE FROM aervo_expenses WHERE id=$1 AND merchant_id=$2`,
+        [id, req.query.merchant_id]
+      );
+      if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 
@@ -369,7 +435,7 @@ module.exports = function(pool) {
         top_products: topProducts.rows
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      fail(res, err);
     }
   });
 

@@ -23,12 +23,18 @@ const REQUIRED_SCOPES = [
 
 const stateStore = new Map();
 
-function handleConnectRequest(req, res) {
-  const { merchantId } = req.query;
+function cleanupStates() {
+  const now = Date.now();
+  for (const [k, v] of stateStore) if (now > v.expiresAt) stateStore.delete(k);
+}
 
-  if (!merchantId) {
-    return res.status(400).json({ error: 'merchantId is required' });
-  }
+// POST /integrations/square/connect (authenticateToken)
+// The merchant is the logged-in user. Returns the Square consent URL as JSON;
+// the frontend navigates to it. The one-time state ties the callback back to
+// this user, so nobody can attach a Square account to someone else's id.
+function handleConnectRequest(req, res) {
+  cleanupStates();
+  const merchantId = String(req.user.userId);
 
   const state = crypto.randomBytes(32).toString('hex');
   stateStore.set(state, { merchantId, expiresAt: Date.now() + 10 * 60 * 1000 });
@@ -38,12 +44,10 @@ function handleConnectRequest(req, res) {
     scope: REQUIRED_SCOPES,
     session: 'false',
     state,
-     redirect_uri: process.env.SQUARE_REDIRECT_URI,
+    redirect_uri: process.env.SQUARE_REDIRECT_URI,
   });
 
-  const authUrl = `${getSquareBase()}/oauth2/authorize?${params}`;
-  console.log('Redirecting merchant to Square OAuth:', authUrl);
-  res.redirect(authUrl);
+  res.json({ success: true, url: `${getSquareBase()}/oauth2/authorize?${params}` });
 }
 
 async function handleOAuthCallback(req, res) {
@@ -51,12 +55,12 @@ async function handleOAuthCallback(req, res) {
 
   if (error) {
     console.warn('Square OAuth denied by merchant', { error });
-    return res.json({ success: false, message: 'Square connection denied.' });
+    return res.redirect('https://aervoapp.com/dashboard/square?square=denied');
   }
 
   const stateData = stateStore.get(state);
   if (!stateData || Date.now() > stateData.expiresAt) {
-    console.warn('Square OAuth invalid or expired state', { state });
+    console.warn('Square OAuth invalid or expired state');
     return res.status(400).json({ error: 'Invalid or expired state parameter' });
   }
 
@@ -103,7 +107,7 @@ async function handleOAuthCallback(req, res) {
         console.error('Initial Square sync failed', { merchantId, error: err.message })
       );
 
-    res.redirect(`https://aervoapp.com/dashboard/square?connected=1&merchantId=${merchantId}`);
+    res.redirect('https://aervoapp.com/dashboard/square?connected=1');
 
   } catch (err) {
     console.error('Square OAuth token exchange failed', {
@@ -112,7 +116,7 @@ async function handleOAuthCallback(req, res) {
       error: err.response?.data || err.message,
     });
 
-    res.json({ success: false, message: 'Square connection error. Please try again.' });
+    res.redirect('https://aervoapp.com/dashboard/square?square=error');
   }
 }
 

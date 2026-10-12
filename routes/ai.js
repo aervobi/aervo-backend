@@ -5,11 +5,23 @@ const Anthropic = require("@anthropic-ai/sdk");
 
 const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-router.post("/chat", async (req, res) => {
-  const { message, merchantId, platform } = req.body;
+module.exports = (authenticateToken) => {
 
-  if (!message || !merchantId) {
-    return res.status(400).json({ error: "message and merchantId are required" });
+// Square / IMS assistant. Requires a login and only ever reads the caller's own
+// data: the merchant is taken from the token, not the request body.
+router.post("/chat", authenticateToken, async (req, res, next) => {
+  // Shopify chats (they send shopOrigin) are handled by the Shopify handler in index.js
+  if (req.body && req.body.shopOrigin && !req.body.merchantId) return next("route");
+
+  const { platform } = req.body;
+  const message = typeof req.body.message === "string" ? req.body.message.trim().slice(0, 2000) : "";
+  const merchantId = String(req.user.userId);
+
+  if (!message) {
+    return res.status(400).json({ error: "message is required" });
+  }
+  if (req.body.merchantId && String(req.body.merchantId) !== merchantId) {
+    return res.status(403).json({ error: "Access denied" });
   }
 
   try {
@@ -119,8 +131,10 @@ ${busiestHours.map((h) => `- ${h.hour} — ${h.orders} orders`).join("\n")}
     res.json({ reply });
   } catch (err) {
     console.error("AI chat error:", err);
-    res.status(500).json({ error: "AI chat failed", detail: err.message });
+    res.status(500).json({ error: "AI chat failed" });
   }
 });
 
-module.exports = router;
+return router;
+};
+

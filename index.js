@@ -29,16 +29,25 @@ const {
 const app = express();
 app.set("trust proxy", 1);
 
-app.use(
-  cors({
-    origin: ["https://aervoapp.com", "https://www.aervoapp.com", "https://admin.shopify.com"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with"],
-    exposedHeaders: ["Content-Type"],
-    credentials: true,
-  })
-);
-app.options("*", cors());
+app.disable("x-powered-by");
+
+const corsOptions = {
+  origin: ["https://aervoapp.com", "https://www.aervoapp.com", "https://admin.shopify.com"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with"],
+  exposedHeaders: ["Content-Type"],
+  credentials: true,
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // same allow-list for preflight (was: any origin)
+
+// Baseline security headers for every API response
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
 
 app.use((req, res, next) => {
   const shop = req.query.shop;
@@ -95,6 +104,27 @@ const authLimiter = rateLimit({
   },
 });
 
+// Broad limiter for the whole API (per IP), plus a tight one for the AI endpoints,
+// which cost money on every call. Webhooks from Square/Shopify are exempt.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) =>
+    req.originalUrl.startsWith("/integrations/square/webhooks") ||
+    req.originalUrl.startsWith("/webhooks/"),
+  message: { success: false, message: "Too many requests. Please slow down." },
+});
+const aiLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "Too many AI requests. Please wait a few minutes." },
+});
+app.use(apiLimiter);
+
 const isHostedDb =
   process.env.DATABASE_URL && !process.env.DATABASE_URL.includes("localhost");
 
@@ -105,29 +135,7 @@ const pool = new Pool({
 
 app.locals.pool = pool;
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_key_change_me";
-
-// ============= JWT MIDDLEWARE =============
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Authentication required" });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Invalid or expired token" });
-    }
-    req.user = user;
-    next();
-  });
-}
+const { authenticateToken, JWT_SECRET } = require("./middleware/auth");
 
 // ==============================
 // ✅ SHOPIFY WEBHOOK HMAC VERIFY
@@ -135,10 +143,6 @@ function authenticateToken(req, res, next) {
 function verifyShopifyWebhook(req, res, next) {
   try {
     const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
-    console.log("HMAC header:", hmacHeader);
-    console.log("Raw body:", req.rawBody);
-    console.log("API Secret exists:", !!process.env.SHOPIFY_API_SECRET);
-    
     if (!hmacHeader) return res.status(401).send("Missing HMAC header");
 
     const rawBody = req.rawBody || "";
@@ -207,11 +211,11 @@ const shopifyRouter = require("./routes/shopify")(pool);
 app.use("/auth/shopify", shopifyRouter);
 
 const squareRoutes = require("./integrations/square/routes");
-app.use("/integrations/square", squareRoutes);
+app.use("/integrations/square", squareRoutes(authenticateToken));
 
 // Stripe routes
 const stripeRoutes = require("./stripe/routes");
-app.use("/stripe", stripeRoutes);
+app.use("/stripe", stripeRoutes(authenticateToken));
 
 // Google routes
 const googleRoutes = require("./routes/google");
@@ -299,11 +303,11 @@ app.get("/dashboard/csv", (req, res) => {
 
 //ai routes 
 const aiRoutes = require("./routes/ai");
-app.use("/api/ai", aiRoutes);
+app.use("/api/ai", aiLimiter, aiRoutes(authenticateToken));
 
 //Inventory Management routes 
 const imsRoutes = require('./routes/ims');
-app.use('/api/ims', imsRoutes(pool));
+app.use('/api/ims', imsRoutes(pool, authenticateToken));
 
 // ============================================================
 // UPDATE your /dashboard route to redirect based on platform
@@ -334,16 +338,6 @@ app.get("/dashboard", authenticateToken, async (req, res) => {
 // ============= HEALTH CHECK =============
 app.get("/", (req, res) => {
   res.send("Aervo backend is running!");
-});
-
-// TEMPORARY DEBUG - remove after fixing Square
-app.get("/debug/square-env", (req, res) => {
-  res.json({
-    environment: process.env.SQUARE_ENVIRONMENT,
-    appId: process.env.SQUARE_APP_ID ? "set" : "missing",
-    appSecret: process.env.SQUARE_APP_SECRET ? "set" : "missing",
-    redirectUri: process.env.SQUARE_REDIRECT_URI,
-  });
 });
 
 // ==============================
@@ -989,60 +983,6 @@ ${shopContext}`,
   }
 });
 
-// ============= INSIGHTS (legacy endpoint) =============
-app.get("/insights", async (req, res) => {
-  try {
-    const shop = String(req.query.shop || "").trim();
-    if (!shop) return res.status(400).json({ success: false, message: "Missing shop" });
-
-    const dbRes = await pool.query("SELECT access_token FROM shops WHERE shop_origin = $1", [shop]);
-    if (dbRes.rows.length === 0)
-      return res.status(404).json({ success: false, message: "Shop not found." });
-
-    const accessToken = dbRes.rows[0].access_token;
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
-    const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
-
-    const [shopResp, ordersResp] = await Promise.all([
-      fetch(`${baseUrl}/shop.json`, { headers: { "X-Shopify-Access-Token": accessToken } }),
-      fetch(`${baseUrl}/orders.json?status=any&limit=10`, {
-        headers: { "X-Shopify-Access-Token": accessToken },
-      }),
-    ]);
-
-    if (!shopResp.ok)
-      return res.status(shopResp.status).json({ success: false, message: "Shopify shop.json failed" });
-    if (!ordersResp.ok)
-      return res
-        .status(ordersResp.status)
-        .json({ success: false, message: "Shopify orders.json failed" });
-
-    const shopJson = await shopResp.json();
-    const ordersJson = await ordersResp.json();
-
-    return res.json({
-      success: true,
-      shopName: shopJson.shop?.name || null,
-      recentOrders: ordersJson.orders || [],
-    });
-  } catch (err) {
-    console.error("Insights error:", err);
-    return res.status(500).json({ success: false, message: "Insights failed" });
-  }
-});
-
-// ============= TEST EMAIL =============
-app.get("/api/test-email", async (req, res) => {
-  const to = req.query.to || process.env.TEST_EMAIL;
-  try {
-    await sendWelcomeEmail({ toEmail: to, companyName: "Aervo Test Company" });
-    res.json({ ok: true, message: `Test welcome email sent to ${to}` });
-  } catch (err) {
-    console.error("Test email failed:", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
 // ============= SIGNUP =============
 app.post("/api/signup", authLimiter, async (req, res) => {
   try {
@@ -1051,6 +991,13 @@ app.post("/api/signup", authLimiter, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Email, password, and company name are required.",
+      });
+    }
+
+    if (typeof password !== "string" || password.length < 8 || password.length > 128) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be between 8 and 128 characters.",
       });
     }
 
@@ -1146,15 +1093,16 @@ app.post("/api/login", authLimiter, async (req, res) => {
     if (result.rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials." });
 
     const user = result.rows[0];
+    const match = await bcrypt.compare(String(password), user.password_hash);
+    if (!match) return res.status(401).json({ success: false, message: "Invalid credentials." });
+
+    // Only tell people their email is unverified once they've proven the password
     if (!user.email_verified) {
       return res.status(403).json({
         success: false,
         message: "Please verify your email before logging in.",
       });
     }
-
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.status(401).json({ success: false, message: "Invalid credentials." });
 
     await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
@@ -1190,8 +1138,10 @@ app.post("/api/forgot-password", authLimiter, async (req, res) => {
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60);
 
+    // Store only a hash, so a database leak can't be used to reset passwords
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     await pool.query(`UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`, [
-      token,
+      tokenHash,
       expiresAt,
       user.id,
     ]);
@@ -1219,10 +1169,18 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
     });
   }
 
+  if (typeof newPassword !== "string" || newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({
+      success: false,
+      message: "Password must be between 8 and 128 characters.",
+    });
+  }
+
   try {
+    const tokenHash = crypto.createHash("sha256").update(String(token)).digest("hex");
     const result = await pool.query(
       `SELECT id, email FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()`,
-      [token]
+      [tokenHash]
     );
 
     if (result.rows.length === 0) {
@@ -1297,23 +1255,6 @@ async function registerWebhooksForAllShops() {
     console.error("Failed to register webhooks for shops:", err);
   }
 }
-app.get("/debug/webhooks", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT shop_origin, access_token FROM shops LIMIT 1");
-    const { shop_origin, access_token } = result.rows[0];
-    const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
-    
-    const response = await fetch(`https://${shop_origin}/admin/api/${apiVersion}/webhooks.json`, {
-      headers: { "X-Shopify-Access-Token": access_token }
-    });
-    
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ============= START SERVER =============
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
