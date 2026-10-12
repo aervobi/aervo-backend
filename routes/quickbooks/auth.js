@@ -7,6 +7,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
+const tokenStore = require('./tokenStore');
 
 module.exports = function (pool, authenticateToken) {
   const router = express.Router();
@@ -24,8 +25,7 @@ module.exports = function (pool, authenticateToken) {
   }
 
   // Intuit's OAuth server is the same for sandbox and production —
-  // only the Accounting API base URL (used later by the sync job)
-  // differs by environment.
+  // only the Accounting API base URL (used by the sync job) differs.
   const AUTH_BASE = 'https://appcenter.intuit.com/connect/oauth2';
   const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
   const REVOKE_URL = 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke';
@@ -48,31 +48,6 @@ module.exports = function (pool, authenticateToken) {
     for (const [state, data] of stateStore) {
       if (now > data.expiresAt) stateStore.delete(state);
     }
-  }
-
-  // ---- token encryption at rest ----
-  // Same AES-256-GCM scheme as integrations/square/auth/tokenStore.js.
-  const ENCRYPTION_KEY = Buffer.from(
-    process.env.AERVO_API_SECRET || 'default-dev-key-32-bytes-long!!',
-    'utf8'
-  ).subarray(0, 32);
-
-  function encrypt(text) {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-    const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-    return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
-  }
-
-  function decrypt(encoded) {
-    const [ivHex, authTagHex, encryptedHex] = encoded.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-    const encrypted = Buffer.from(encryptedHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-    decipher.setAuthTag(authTag);
-    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
   }
 
   // ============================================================
@@ -146,34 +121,15 @@ module.exports = function (pool, authenticateToken) {
       const { access_token, refresh_token, expires_in, x_refresh_token_expires_in } =
         tokenResponse.data;
 
-      const accessTokenExpiresAt = new Date(Date.now() + expires_in * 1000);
-      const refreshTokenExpiresAt = new Date(Date.now() + x_refresh_token_expires_in * 1000);
-
-      await pool.query(
-        `INSERT INTO quickbooks_connections
-           (user_id, realm_id, access_token_enc, refresh_token_enc,
-            access_token_expires_at, refresh_token_expires_at, environment, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-         ON CONFLICT (user_id) DO UPDATE SET
-           realm_id                 = EXCLUDED.realm_id,
-           access_token_enc         = EXCLUDED.access_token_enc,
-           refresh_token_enc        = EXCLUDED.refresh_token_enc,
-           access_token_expires_at  = EXCLUDED.access_token_expires_at,
-           refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
-           environment              = EXCLUDED.environment,
-           sync_status              = NULL,
-           sync_error               = NULL,
-           updated_at               = NOW()`,
-        [
-          userId,
-          realmId,
-          encrypt(access_token),
-          encrypt(refresh_token),
-          accessTokenExpiresAt,
-          refreshTokenExpiresAt,
-          QB_ENVIRONMENT,
-        ]
-      );
+      await tokenStore.saveTokens({
+        userId,
+        realmId,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        accessTokenExpiresAt: new Date(Date.now() + expires_in * 1000),
+        refreshTokenExpiresAt: new Date(Date.now() + x_refresh_token_expires_in * 1000),
+        environment: QB_ENVIRONMENT,
+      });
 
       console.log('QuickBooks connected', { userId, realmId });
       res.redirect(`${APP_URL}/settings?quickbooks=connected`);
@@ -195,24 +151,19 @@ module.exports = function (pool, authenticateToken) {
   // ============================================================
   router.get('/api/quickbooks/status', authenticateToken, async (req, res) => {
     try {
-      const result = await pool.query(
-        `SELECT realm_id, environment, connected_at, access_token_expires_at
-         FROM quickbooks_connections WHERE user_id = $1`,
-        [req.user.userId]
-      );
+      const conn = await tokenStore.getConnection(req.user.userId);
 
-      if (!result.rows.length) {
+      if (!conn) {
         return res.json({ success: true, connected: false });
       }
 
-      const row = result.rows[0];
       res.json({
         success: true,
         connected: true,
-        realmId: row.realm_id,
-        environment: row.environment,
-        connectedAt: row.connected_at,
-        tokenExpiresAt: row.access_token_expires_at,
+        realmId: conn.realmId,
+        environment: conn.environment,
+        connectedAt: conn.connectedAt,
+        tokenExpiresAt: conn.accessTokenExpiresAt,
       });
     } catch (err) {
       console.error('Error fetching QuickBooks status', { userId: req.user.userId, error: err.message });
@@ -229,17 +180,13 @@ module.exports = function (pool, authenticateToken) {
     const userId = req.user.userId;
 
     try {
-      const result = await pool.query(
-        `SELECT refresh_token_enc FROM quickbooks_connections WHERE user_id = $1`,
-        [userId]
-      );
+      const conn = await tokenStore.getConnection(userId);
 
-      if (result.rows.length) {
+      if (conn) {
         try {
-          const refreshToken = decrypt(result.rows[0].refresh_token_enc);
           await axios.post(
             REVOKE_URL,
-            { token: refreshToken },
+            { token: conn.refreshToken },
             {
               headers: {
                 'Content-Type': 'application/json',
@@ -256,7 +203,7 @@ module.exports = function (pool, authenticateToken) {
         }
       }
 
-      await pool.query(`DELETE FROM quickbooks_connections WHERE user_id = $1`, [userId]);
+      await tokenStore.deleteConnection(userId);
 
       console.log('QuickBooks disconnected', { userId });
       res.json({ success: true, message: 'QuickBooks connection removed' });

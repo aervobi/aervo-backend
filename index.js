@@ -251,6 +251,38 @@ app.use("/", playbooksRoutes);
 const quickbooksAuthRoutes = require("./routes/quickbooks/auth")(pool, authenticateToken);
 app.use("/", quickbooksAuthRoutes);
 
+// Product cost mapping (QuickBooks item <-> Aervo product)
+const costMappingRoutes = require("./routes/products/costMapping")(pool, authenticateToken);
+app.use("/", costMappingRoutes);
+
+// Margin analytics (QuickBooks-backed cost data)
+const marginRoutes = require("./routes/analytics/margin")(pool, authenticateToken);
+app.use("/", marginRoutes);
+
+// Weekly narrative digest
+const digestRoutes = require("./routes/intelligence/digest")(pool, authenticateToken);
+app.use("/", digestRoutes);
+
+// Nightly QuickBooks sync — runs in-process on a schedule rather than
+// as a separate Render service. Time is pinned to UTC explicitly since
+// this process's host timezone isn't guaranteed to match the DB's
+// (see the UTC-boundary fix in routes/analytics/margin.js).
+const cron = require("node-cron");
+const { syncAll: syncQuickbooks } = require("./scripts/sync-quickbooks");
+
+cron.schedule(
+  "0 2 * * *",
+  async () => {
+    console.log("Starting scheduled QuickBooks sync...");
+    try {
+      await syncQuickbooks();
+    } catch (err) {
+      console.error("Scheduled QuickBooks sync failed:", err.message);
+    }
+  },
+  { timezone: "UTC" }
+);
+
 // Intelligence Center
 app.get("/intelligence", (req, res) => {
   res.sendFile(path.join(__dirname, "../aervo/intelligence.html"));
