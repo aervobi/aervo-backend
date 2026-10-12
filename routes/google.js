@@ -82,7 +82,10 @@ router.get('/auth/google/callback', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    const redirectPage = isNewUser ? 'onboarding' : 'dashboard';
+    // Also resume onboarding for Google users who signed up but never finished
+    // it (onboarding saves `platform`, so an empty one means it never completed).
+    const needsOnboarding = isNewUser || (!user.onboarded && !user.platform);
+    const redirectPage = needsOnboarding ? 'onboarding' : 'dashboard';
     res.redirect(`https://aervoapp.com/${redirectPage}?token=${token}&name=${encodeURIComponent(data.given_name)}`);
 
   } catch (err) {
