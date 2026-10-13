@@ -153,4 +153,31 @@ async function refreshAccessToken(merchantId) {
   return access_token;
 }
 
-module.exports = { handleConnectRequest, handleOAuthCallback, refreshAccessToken };
+// Tell Square to revoke the access token, so a disconnect really ends access
+// (deleting our copy alone would leave the token valid at Square). Best effort:
+// a failure is logged but never blocks the local disconnect.
+async function revokeAccessToken(accessToken) {
+  try {
+    await axios.post(
+      `${getSquareBase()}/oauth2/revoke`,
+      { client_id: process.env.SQUARE_APP_ID, access_token: accessToken },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Square-Version': '2024-01-18',
+          Authorization: `Client ${process.env.SQUARE_APP_SECRET}`,
+        },
+        timeout: 10000,
+      }
+    );
+    return true;
+  } catch (err) {
+    console.error('Square token revoke failed', {
+      status: err.response?.status,
+      error: err.response?.data?.errors || err.message,
+    });
+    return false;
+  }
+}
+
+module.exports = { handleConnectRequest, handleOAuthCallback, refreshAccessToken, revokeAccessToken };

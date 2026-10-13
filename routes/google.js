@@ -1,9 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { google } = require('googleapis');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const { pool } = require('../db');
 
 // .env historically uses _URI, Render uses _URL; accept either
@@ -15,14 +13,23 @@ const oauth2Client = new google.auth.OAuth2(
   REDIRECT_URL
 );
 
-const { JWT_SECRET } = require('../middleware/auth');
+const crypto = require('crypto');
+const { signSession, setSessionCookie, readCookie, isProd } = require('../middleware/auth');
+
+const STATE_COOKIE = 'aervo_gstate';
+const stateCookieOpts = { httpOnly: true, secure: isProd, sameSite: 'lax', path: '/auth/google' };
 
 // ============= GOOGLE SIGN IN - Get auth URL =============
 router.get('/auth/google', (req, res) => {
+  // One-time state, also kept in a short-lived cookie, so the callback can tell
+  // this browser started the sign-in (blocks "log in as the attacker" CSRF)
+  const state = crypto.randomBytes(24).toString('hex');
+  res.cookie(STATE_COOKIE, state, { ...stateCookieOpts, maxAge: 10 * 60 * 1000 });
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['profile', 'email'],
-    redirect_uri: REDIRECT_URL
+    redirect_uri: REDIRECT_URL,
+    state
   });
   res.json({ url });
 });
@@ -30,7 +37,13 @@ router.get('/auth/google', (req, res) => {
 // ============= GOOGLE SIGN IN - Callback =============
 router.get('/auth/google/callback', async (req, res) => {
   try {
-    const { code, error } = req.query;
+    const { code, error, state } = req.query;
+    const expected = readCookie(req, STATE_COOKIE);
+    res.clearCookie(STATE_COOKIE, stateCookieOpts);
+    if (!error && (!state || !expected || state !== expected)) {
+      console.warn('Google callback state mismatch');
+      return res.redirect('https://aervoapp.com/login?error=google_failed');
+    }
     if (error || !code) {
       // Google sends ?error=access_denied when the user cancels the consent screen
       return res.redirect('https://aervoapp.com/login?error=google_cancelled');
@@ -64,7 +77,7 @@ router.get('/auth/google/callback', async (req, res) => {
       const insertResult = await pool.query(
         `INSERT INTO users (email, password_hash, company_name, role, email_verified, google_id, avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, email, company_name, role`,
+         RETURNING id, email, company_name, role, token_version`,
         [email, passwordHash, data.name, 'Owner', true, data.id, data.picture]
       );
       user = insertResult.rows[0];
@@ -76,17 +89,14 @@ router.get('/auth/google/callback', async (req, res) => {
       );
     }
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    // The session goes in an httpOnly cookie; nothing secret is put in the URL
+    setSessionCookie(res, signSession(user));
 
     // Also resume onboarding for Google users who signed up but never finished
     // it (onboarding saves `platform`, so an empty one means it never completed).
     const needsOnboarding = isNewUser || (!user.onboarded && !user.platform);
     const redirectPage = needsOnboarding ? 'onboarding' : 'dashboard';
-    res.redirect(`https://aervoapp.com/${redirectPage}?token=${token}&name=${encodeURIComponent(data.given_name)}`);
+    res.redirect(`https://aervoapp.com/${redirectPage}?session=1&name=${encodeURIComponent(data.given_name || '')}`);
 
   } catch (err) {
     // Google's own errors carry the useful detail in err.response.data

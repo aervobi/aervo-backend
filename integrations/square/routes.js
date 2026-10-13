@@ -2,7 +2,7 @@
 const express = require('express');
 const { ownMerchantId, rejectForeignId } = require('../../middleware/auth');
 
-const { handleConnectRequest, handleOAuthCallback } = require('./auth/oauth');
+const { handleConnectRequest, handleOAuthCallback, revokeAccessToken } = require('./auth/oauth');
 const { handleWebhookEvent } = require('./webhooks/webhookHandler');
 const { deleteTokens, getTokensByMerchant } = require('./auth/tokenStore');
 const { pool } = require('../../db');
@@ -68,9 +68,12 @@ router.delete('/disconnect', authenticateToken, async (req, res) => {
   const merchantId = ownMerchantId(req);
 
   try {
+    // Revoke at Square first (needs our stored token), then forget it locally
+    const tokens = await getTokensByMerchant(merchantId);
+    const revoked = tokens ? await revokeAccessToken(tokens.accessToken) : true;
     await deleteTokens(merchantId);
-    console.log('Merchant disconnected Square', { merchantId });
-    res.json({ success: true, message: 'Square connection removed' });
+    console.log('Merchant disconnected Square', { merchantId, revoked });
+    res.json({ success: true, message: 'Square connection removed', revoked });
   } catch (err) {
     console.error('Error disconnecting Square', { merchantId, error: err.message });
     res.status(500).json({ error: 'Internal server error' });

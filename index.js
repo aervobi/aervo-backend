@@ -17,6 +17,19 @@ const crypto = require("crypto");
 const Anthropic = require("@anthropic-ai/sdk");
 
 const {
+  authenticateToken,
+  ALLOWED_ORIGINS,
+  initAuth,
+  signSession,
+  setSessionCookie,
+  clearSessionCookie,
+  verifyToken,
+  readCookie,
+  COOKIE_NAME,
+  revokeSessions,
+} = require("./middleware/auth");
+
+const {
   initSendgrid,
   sendWelcomeEmail,
   sendVerifyEmail,
@@ -32,7 +45,7 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 const corsOptions = {
-  origin: ["https://aervoapp.com", "https://www.aervoapp.com", "https://admin.shopify.com"],
+  origin: ALLOWED_ORIGINS,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with"],
   exposedHeaders: ["Content-Type"],
@@ -62,7 +75,9 @@ app.use((req, res, next) => {
   const url = req.originalUrl || "";
 
   const needsRawBody =
-    url === "/integrations/square/webhooks" || url.startsWith("/webhooks/shopify/");
+    url === "/integrations/square/webhooks" ||
+    url === "/stripe/webhook" ||
+    url.startsWith("/webhooks/shopify/");
 
   if (!needsRawBody) return next();
 
@@ -113,6 +128,7 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) =>
     req.originalUrl.startsWith("/integrations/square/webhooks") ||
+    req.originalUrl.startsWith("/stripe/webhook") ||
     req.originalUrl.startsWith("/webhooks/"),
   message: { success: false, message: "Too many requests. Please slow down." },
 });
@@ -134,8 +150,7 @@ const pool = new Pool({
 });
 
 app.locals.pool = pool;
-
-const { authenticateToken, JWT_SECRET } = require("./middleware/auth");
+initAuth(pool); // adds users.token_version (session revocation)
 
 // ==============================
 // ✅ SHOPIFY WEBHOOK HMAC VERIFY
@@ -200,6 +215,9 @@ function verifyShopifyWebhook(req, res, next) {
     await pool.query(
       `ALTER TABLE shopify_oauth_states ADD COLUMN IF NOT EXISTS user_id INTEGER`
     );
+    await pool.query(
+      `ALTER TABLE shopify_oauth_states ADD COLUMN IF NOT EXISTS source TEXT`
+    );
 
     console.log("✅ Shopify tables ensured");
   } catch (err) {
@@ -207,7 +225,7 @@ function verifyShopifyWebhook(req, res, next) {
   }
 })();
 
-const shopifyRouter = require("./routes/shopify")(pool);
+const shopifyRouter = require("./routes/shopify")(pool, { authLimiter });
 app.use("/auth/shopify", shopifyRouter);
 
 const squareRoutes = require("./integrations/square/routes");
@@ -407,7 +425,7 @@ app.post(
 async function getShopToken(shop, userId) {
   const result = await pool.query(
     `SELECT access_token FROM shops 
-     WHERE shop_origin = $1 AND (user_id = $2 OR user_id IS NULL)`,
+     WHERE shop_origin = $1 AND user_id = $2`,
     [shop, userId]
   );
 
@@ -845,7 +863,7 @@ app.post("/api/ai/chat", authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop origin is required" });
 
     const shopCheck = await pool.query(
-      `SELECT shop_origin FROM shops WHERE shop_origin = $1 AND (user_id = $2 OR user_id IS NULL)`,
+      `SELECT shop_origin FROM shops WHERE shop_origin = $1 AND user_id = $2`,
       [shopOrigin, req.user.userId]
     );
     if (shopCheck.rows.length === 0) {
@@ -1023,7 +1041,7 @@ app.post("/api/signup", authLimiter, async (req, res) => {
     );
 
     const user = insertResult.rows[0];
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+    setSessionCookie(res, signSession(user));
 
     sendVerifyEmail({ toEmail: normalizedEmail, token: verifyToken }).catch((err) =>
       console.error("Verify email failed:", err)
@@ -1031,7 +1049,6 @@ app.post("/api/signup", authLimiter, async (req, res) => {
 
     return res.json({
       success: true,
-      token,
       user: { id: user.id, email: user.email, companyName: user.company_name, role: user.role },
     });
   } catch (err) {
@@ -1086,14 +1103,14 @@ app.post("/api/login", authLimiter, async (req, res) => {
 
     const normalizedEmail = String(email).toLowerCase();
     const result = await pool.query(
-      "SELECT id, email, password_hash, company_name, role, email_verified FROM users WHERE email = $1",
+      "SELECT id, email, password_hash, company_name, role, email_verified, token_version FROM users WHERE email = $1",
       [normalizedEmail]
     );
 
     if (result.rows.length === 0) return res.status(401).json({ success: false, message: "Invalid credentials." });
 
     const user = result.rows[0];
-    const match = await bcrypt.compare(String(password), user.password_hash);
+    const match = await bcrypt.compare(String(password), user.password_hash || "");
     if (!match) return res.status(401).json({ success: false, message: "Invalid credentials." });
 
     // Only tell people their email is unverified once they've proven the password
@@ -1106,17 +1123,35 @@ app.post("/api/login", authLimiter, async (req, res) => {
 
     await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+    // The session lives in an httpOnly cookie; page scripts never see the token
+    setSessionCookie(res, signSession(user));
 
     return res.json({
       success: true,
-      token,
       user: { id: user.id, email: user.email, companyName: user.company_name, role: user.role },
     });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ success: false, message: "Server error during login." });
   }
+});
+
+// ============= LOGOUT =============
+// Ends every session for this account (all devices). Works with an expired or
+// already-bad session too: it always clears the cookie.
+app.post("/api/logout", async (req, res) => {
+  try {
+    const bearer = (req.headers["authorization"] || "").split(" ")[1];
+    const payload = verifyToken(readCookie(req, COOKIE_NAME) || "") || verifyToken(bearer || "");
+    // Only honour a cookie-based logout from our own site (stops forced logouts)
+    const origin = req.headers.origin;
+    const originOk = !origin || ALLOWED_ORIGINS.includes(origin);
+    if (payload && originOk) await revokeSessions(pool, payload.userId);
+  } catch (err) {
+    console.error("Logout error:", err.message);
+  }
+  clearSessionCookie(res);
+  res.json({ success: true });
 });
 
 // ============= FORGOT PASSWORD =============
@@ -1197,6 +1232,7 @@ app.post("/api/reset-password", authLimiter, async (req, res) => {
       `UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2`,
       [hashed, user.id]
     );
+    await revokeSessions(pool, user.id); // a reset must end any session an attacker may hold
 
     return res.json({ success: true, message: "Password updated successfully." });
   } catch (err) {

@@ -28,7 +28,9 @@ function verifyWebhookSignature(body, signature, notificationUrl) {
 async function handleWebhookEvent(req, res) {
   const signature = req.headers['x-square-hmacsha256-signature'];
   const rawBody = req.rawBody;
-  const notificationUrl = `${process.env.AERVO_APP_URL}/integrations/square/webhooks`;
+  // Must match, character for character, the notification URL registered for the
+  // webhook subscription in the Square developer dashboard.
+  const notificationUrl = `${process.env.AERVO_APP_URL || 'https://api.aervoapp.com'}/integrations/square/webhooks`;
 
   if (!verifyWebhookSignature(rawBody, signature, notificationUrl)) {
     console.warn('Square webhook signature verification failed');

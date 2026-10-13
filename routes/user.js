@@ -27,6 +27,8 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
 });
 
+const { signSession, setSessionCookie, clearSessionCookie, revokeSessions } = require("../middleware/auth");
+
 module.exports = (pool, authenticateToken) => {
 
   // ── GET /api/user/me ──────────────────────────────────────────
@@ -242,6 +244,15 @@ module.exports = (pool, authenticateToken) => {
         [hashed, req.user.userId]
       );
 
+      // End every other session (a stolen token stops working), then keep this
+      // device signed in with a fresh one.
+      await revokeSessions(pool, req.user.userId);
+      const fresh = await pool.query(
+        "SELECT id, email, token_version FROM users WHERE id = $1",
+        [req.user.userId]
+      );
+      if (fresh.rows[0]) setSessionCookie(res, signSession(fresh.rows[0]));
+
       return res.json({ success: true, message: "Password updated successfully." });
     } catch (err) {
       console.error("Change password error:", err);
@@ -265,7 +276,9 @@ module.exports = (pool, authenticateToken) => {
       await pool.query("DELETE FROM connected_stores WHERE user_id = $1", [userId]);
       await pool.query("DELETE FROM alert_preferences WHERE user_id = $1", [userId]).catch(() => {});
       await pool.query("DELETE FROM alerts_log WHERE user_id = $1", [userId]).catch(() => {});
+      // (once the row is gone, every session for it fails the auth check)
       await pool.query("DELETE FROM users WHERE id = $1", [userId]);
+      clearSessionCookie(res);
 
       return res.json({ success: true, message: "Account deleted." });
     } catch (err) {

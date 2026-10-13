@@ -1,21 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const { Pool } = require("pg");
-const jwt = require("jsonwebtoken");
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const JWT_SECRET = process.env.JWT_SECRET;
-
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ success: false, message: "Authentication required" });
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ success: false, message: "Invalid or expired token" });
-    req.user = user;
-    next();
-  });
-}
+const { pool } = require("../db");
+const { authenticateToken } = require("../middleware/auth");
 
 // GET /api/unified/overview
 router.get("/overview", authenticateToken, async (req, res) => {

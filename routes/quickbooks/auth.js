@@ -16,7 +16,9 @@ module.exports = function (pool, authenticateToken) {
   const QB_CLIENT_SECRET = process.env.QUICKBOOKS_CLIENT_SECRET;
   const QB_REDIRECT_URI = process.env.QUICKBOOKS_REDIRECT_URI;
   const QB_ENVIRONMENT = process.env.QUICKBOOKS_ENVIRONMENT || 'sandbox';
-  const APP_URL = process.env.APP_URL || 'https://aervoapp.com';
+  // Where to send the browser after the Intuit consent screen: the website, not
+  // the API host (APP_URL is the API's own address, used by Shopify).
+  const APP_URL = process.env.FRONTEND_BASE_URL || 'https://aervoapp.com';
 
   if (!QB_CLIENT_ID || !QB_CLIENT_SECRET || !QB_REDIRECT_URI) {
     console.warn(
