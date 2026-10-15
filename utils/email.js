@@ -31,20 +31,27 @@ function stripHtml(html) {
     .trim();
 }
 
-async function safeSend({ to, subject, html, text }) {
+async function safeSend({ to, subject, html, text, headers, strict }) {
   const from = getFromEmail();
 
   if (!resend) {
     throw new Error("Resend is not initialized. Call initSendgrid() at startup.");
   }
 
-  return resend.emails.send({
+  const result = await resend.emails.send({
     to,
     from,
     subject,
     html,
     text: text || stripHtml(html),
+    ...(headers ? { headers } : {}),
   });
+  // Resend reports problems in the result instead of throwing. Callers that must
+  // know whether the message really went out (the daily summary) pass strict: true.
+  if (strict && result && result.error) {
+    throw new Error(result.error.message || "Email provider rejected the message");
+  }
+  return result;
 }
 
 function buildWelcomeEmail({ companyName }) {
@@ -740,6 +747,12 @@ View dashboard: ${appUrl}/dashboard
   });
 }
 
+// Daily business summary (built by utils/dailySummary.js). `headers` carries the
+// List-Unsubscribe pair so mail apps can show their own one-click unsubscribe.
+async function sendDailySummaryEmail({ to, subject, html, text, headers }) {
+  return safeSend({ to, subject, html, text, headers, strict: true });
+}
+
 module.exports = {
   initSendgrid,
   sendWelcomeEmail,
@@ -747,4 +760,5 @@ module.exports = {
   sendPasswordResetEmail,
   sendAlertEmail,
   sendWeeklyDigestEmail,
+  sendDailySummaryEmail,
 };

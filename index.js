@@ -325,6 +325,19 @@ cron.schedule(
   { timezone: "UTC" }
 );
 
+// Daily business summary email: routes (test button, unsubscribe) + the hourly job
+const dailySummary = require("./routes/dailySummary");
+app.use("/", dailySummary(pool, authenticateToken));
+if (process.env.DAILY_SUMMARY_ENABLED !== "false") {
+  // Every hour at :05. Each person is emailed once per day at 7am in THEIR time zone
+  // (see routes/dailySummary.js), so the job itself runs in UTC around the clock.
+  cron.schedule(
+    "5 * * * *",
+    () => dailySummary.runDailySummaries(pool).catch((err) => console.error("Daily summary job failed:", err.message)),
+    { timezone: "UTC" }
+  );
+}
+
 // Intelligence Center
 app.get("/intelligence", (req, res) => {
   res.sendFile(path.join(__dirname, "../aervo/intelligence.html"));

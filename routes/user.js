@@ -28,6 +28,7 @@ const upload = multer({
 });
 
 const { signSession, setSessionCookie, clearSessionCookie, revokeSessions } = require("../middleware/auth");
+const { isValidTimeZone } = require("../utils/tzdate");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -313,19 +314,26 @@ module.exports = (pool, authenticateToken) => {
   // ── POST /api/user/notifications ─────────────────────────────
   router.post("/api/user/notifications", authenticateToken, async (req, res) => {
     try {
-      const { weekly_digest, revenue_alerts, inventory_alerts, product_updates } = req.body;
+      const { weekly_digest, revenue_alerts, inventory_alerts, product_updates, daily_summary, timezone } = req.body;
+
+      // Unset fields keep their current value (older pages don't send the new ones)
+      const tz = isValidTimeZone(timezone) ? timezone : null;
+      const daily = typeof daily_summary === "boolean" ? daily_summary : null;
 
       const result = await pool.query(
-        `INSERT INTO notification_preferences (user_id, weekly_digest, revenue_alerts, inventory_alerts, product_updates)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO notification_preferences
+           (user_id, weekly_digest, revenue_alerts, inventory_alerts, product_updates, daily_summary, timezone)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6, FALSE), $7)
          ON CONFLICT (user_id) DO UPDATE SET
            weekly_digest = $2,
            revenue_alerts = $3,
            inventory_alerts = $4,
            product_updates = $5,
+           daily_summary = COALESCE($6, notification_preferences.daily_summary),
+           timezone = COALESCE($7, notification_preferences.timezone),
            updated_at = NOW()
          RETURNING *`,
-        [req.user.userId, weekly_digest, revenue_alerts, inventory_alerts, product_updates]
+        [req.user.userId, weekly_digest, revenue_alerts, inventory_alerts, product_updates, daily, tz]
       );
 
       return res.json({ success: true, preferences: result.rows[0] });
