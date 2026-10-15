@@ -134,11 +134,15 @@ module.exports = function (pool, opts = {}) {
   }
 
   // Page that navigates the browser (breaking out of the Shopify admin iframe
-  // unless this is a standalone flow).
+  // unless this is a standalone flow). Standalone flows must NOT load App Bridge:
+  // on a top-level page it redirects the browser into the Shopify admin.
   function redirectPage(res, url, standalone) {
+    const appBridge = standalone
+      ? ""
+      : `<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>`;
     return res.send(`<html>
   <head>
-    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY}"></script>
+    ${appBridge}
   </head>
   <body>
     <script>
