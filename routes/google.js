@@ -14,7 +14,8 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 const crypto = require('crypto');
-const { signSession, setSessionCookie, readCookie, isProd } = require('../middleware/auth');
+const { startSession, startChallenge, readCookie, isProd } = require('../middleware/auth');
+const { requiresSecondFactor } = require('./twoFactor');
 
 const STATE_COOKIE = 'aervo_gstate';
 const stateCookieOpts = { httpOnly: true, secure: isProd, sameSite: 'lax', path: '/auth/google' };
@@ -89,8 +90,15 @@ router.get('/auth/google/callback', async (req, res) => {
       );
     }
 
+    // Two-step verification: a Google sign-in must pass it too, or it would be a
+    // way around it. No session yet, only a short-lived challenge.
+    if (!isNewUser && (await requiresSecondFactor(pool, user.id))) {
+      startChallenge(res, user);
+      return res.redirect('https://aervoapp.com/login?twofa=1');
+    }
+
     // The session goes in an httpOnly cookie; nothing secret is put in the URL
-    setSessionCookie(res, signSession(user));
+    startSession(res, user);
 
     // Also resume onboarding for Google users who signed up but never finished
     // it (onboarding saves `platform`, so an empty one means it never completed).

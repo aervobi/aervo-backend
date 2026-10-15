@@ -7,8 +7,10 @@ const fetch = require("node-fetch");
 const {
   authenticateToken,
   signSession,
-  setSessionCookie,
+  startSession,
+  startChallenge,
 } = require("../middleware/auth");
+const { requiresSecondFactor } = require("./twoFactor");
 
 module.exports = function (pool, opts = {}) {
   const router = express.Router();
@@ -289,7 +291,12 @@ module.exports = function (pool, opts = {}) {
       if (u.rows.length === 0) return res.status(401).json({ success: false, message: "Account not found" });
 
       const user = u.rows[0];
-      setSessionCookie(res, signSession(user));
+      // An account with two-step verification still has to pass it
+      if (await requiresSecondFactor(pool, user.id)) {
+        startChallenge(res, user);
+        return res.json({ success: true, twoFactorRequired: true });
+      }
+      startSession(res, user);
       return res.json({
         success: true,
         user: { id: user.id, email: user.email, companyName: user.company_name, platform: user.platform },

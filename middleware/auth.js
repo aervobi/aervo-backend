@@ -5,9 +5,10 @@
 // from the request body, query string or URL.
 //
 // Sessions
-//  - A signed JWT carrying { userId, email, tv }. `tv` is the user's
+//  - A signed JWT carrying { userId, email, tv, auth_at }. `tv` is the user's
 //    token_version at sign time; bumping that column (logout, password change or
 //    reset, account deletion) invalidates every session issued before it.
+//    `auth_at` is when the person originally signed in (kept across renewals).
 //  - Browsers hold the JWT in an httpOnly cookie (JavaScript, and therefore any
 //    injected script, can't read it). Non-browser / embedded-in-Shopify clients
 //    can still send it as "Authorization: Bearer".
@@ -25,7 +26,14 @@ if (!JWT_SECRET) {
 }
 
 const COOKIE_NAME = "aervo_session";
-const SESSION_DAYS = 7;
+const CHALLENGE_COOKIE = "aervo_2fa";
+
+// Sessions expire after this much INACTIVITY (the cookie is renewed only when the
+// person is actually using the app: see POST /api/session/ping), and never live
+// longer than the absolute cap however active they are.
+const IDLE_MINUTES = Number(process.env.SESSION_IDLE_MINUTES) || 30;
+const ABSOLUTE_DAYS = Number(process.env.SESSION_MAX_DAYS) || 7;
+const CHALLENGE_MINUTES = 5; // time allowed to enter a two-step code after the password
 const ALLOWED_ORIGINS = [
   "https://aervoapp.com",
   "https://www.aervoapp.com",
@@ -55,9 +63,14 @@ async function initAuth(pool) {
 }
 
 // ── sign / cookie helpers ─────────────────────────────────────────────────────
-function signSession(user, { expiresIn = `${SESSION_DAYS}d` } = {}) {
+function signSession(user, { expiresIn = `${IDLE_MINUTES}m`, authAt } = {}) {
   return jwt.sign(
-    { userId: user.id, email: user.email, tv: user.token_version || 0 },
+    {
+      userId: user.id,
+      email: user.email,
+      tv: user.token_version || 0,
+      auth_at: authAt || Math.floor(Date.now() / 1000),
+    },
     JWT_SECRET,
     { expiresIn, algorithm: "HS256" }
   );
@@ -66,10 +79,48 @@ function signSession(user, { expiresIn = `${SESSION_DAYS}d` } = {}) {
 const cookieBase = () => ({ httpOnly: true, secure: isProd, sameSite: "lax", path: "/" });
 
 function setSessionCookie(res, token) {
-  res.cookie(COOKIE_NAME, token, {
+  // Rolling: the browser drops the cookie after IDLE_MINUTES unless it is renewed
+  res.cookie(COOKIE_NAME, token, { ...cookieBase(), maxAge: IDLE_MINUTES * 60 * 1000 });
+}
+
+// Sign a person in (browser): short idle-length token in an httpOnly cookie.
+function startSession(res, user, opts) {
+  setSessionCookie(res, signSession(user, opts));
+}
+
+// Renew an existing session for another idle window, keeping its original
+// sign-in time so the absolute cap still applies.
+function renewSession(res, payload) {
+  startSession(
+    res,
+    { id: payload.userId, email: payload.email, token_version: payload.tv || 0 },
+    { authAt: payload.auth_at || Math.floor(Date.now() / 1000) }
+  );
+}
+
+// ── two-step verification challenge ──────────────────────────────────────────
+// After the password (or Google / Shopify) check succeeds for an account that has
+// two-step verification on, we do NOT start a session. We hand the browser a
+// short-lived challenge cookie; only a valid code turns it into a session.
+function startChallenge(res, user) {
+  const token = jwt.sign(
+    { purpose: "2fa", userId: user.id, tv: user.token_version || 0 },
+    JWT_SECRET,
+    { expiresIn: `${CHALLENGE_MINUTES}m`, algorithm: "HS256" }
+  );
+  res.cookie(CHALLENGE_COOKIE, token, {
     ...cookieBase(),
-    maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
+    maxAge: CHALLENGE_MINUTES * 60 * 1000,
   });
+}
+
+function readChallenge(req) {
+  const p = verify(readCookie(req, CHALLENGE_COOKIE) || "");
+  return p && p.purpose === "2fa" ? p : null;
+}
+
+function clearChallenge(res) {
+  res.clearCookie(CHALLENGE_COOKIE, cookieBase());
 }
 
 function clearSessionCookie(res) {
@@ -130,6 +181,14 @@ async function authenticateToken(req, res, next) {
     return res.status(403).json({ success: false, message: "Invalid or expired token" });
   }
 
+  // Absolute cap, however active the person has been
+  const ageSec = Math.floor(Date.now() / 1000) - (payload.auth_at || payload.iat || 0);
+  if (payload.auth_at && ageSec > ABSOLUTE_DAYS * 86400) {
+    return res
+      .status(401)
+      .json({ success: false, code: "SESSION_ENDED", message: "Session expired. Please log in again." });
+  }
+
   // CSRF: a cookie is sent automatically by the browser, so state-changing
   // requests must come from our own site.
   if (viaCookie && !SAFE_METHODS.has(req.method)) {
@@ -182,6 +241,12 @@ module.exports = {
   authenticateToken,
   JWT_SECRET,
   COOKIE_NAME,
+  IDLE_MINUTES,
+  startSession,
+  renewSession,
+  startChallenge,
+  readChallenge,
+  clearChallenge,
   ALLOWED_ORIGINS,
   initAuth,
   signSession,

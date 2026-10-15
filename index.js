@@ -17,6 +17,8 @@ const crypto = require("crypto");
 const Anthropic = require("@anthropic-ai/sdk");
 const { buildMessages } = require("./utils/aiContext");
 const { replyText, PLAIN_TEXT_RULE } = require("./utils/aiModels");
+const twoFactorRoutes = require("./routes/twoFactor");
+const { requiresSecondFactor } = twoFactorRoutes;
 
 const {
   authenticateToken,
@@ -25,6 +27,11 @@ const {
   signSession,
   setSessionCookie,
   clearSessionCookie,
+  startSession,
+  renewSession,
+  startChallenge,
+  clearChallenge,
+  IDLE_MINUTES,
   verifyToken,
   readCookie,
   COOKIE_NAME,
@@ -105,7 +112,7 @@ initSendgrid();
 // ============= RATE LIMITING =============
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
@@ -236,6 +243,9 @@ app.use("/integrations/square", squareRoutes(authenticateToken));
 // Stripe routes
 const stripeRoutes = require("./stripe/routes");
 app.use("/stripe", stripeRoutes(authenticateToken));
+
+// Two-step verification (authenticator app) + its login step
+app.use("/", twoFactorRoutes(pool, authenticateToken, { authLimiter }));
 
 // Google routes
 const googleRoutes = require("./routes/google");
@@ -1050,7 +1060,7 @@ app.post("/api/signup", authLimiter, async (req, res) => {
     );
 
     const user = insertResult.rows[0];
-    setSessionCookie(res, signSession(user));
+    startSession(res, user);
 
     sendVerifyEmail({ toEmail: normalizedEmail, token: verifyToken }).catch((err) =>
       console.error("Verify email failed:", err)
@@ -1130,10 +1140,17 @@ app.post("/api/login", authLimiter, async (req, res) => {
       });
     }
 
+    // Two-step verification: password alone doesn't start a session. The browser
+    // gets a short-lived challenge and must submit a code (POST /api/login/2fa).
+    if (await requiresSecondFactor(pool, user.id)) {
+      startChallenge(res, user);
+      return res.json({ success: true, twoFactorRequired: true });
+    }
+
     await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
     // The session lives in an httpOnly cookie; page scripts never see the token
-    setSessionCookie(res, signSession(user));
+    startSession(res, user);
 
     return res.json({
       success: true,
@@ -1155,12 +1172,26 @@ app.post("/api/logout", async (req, res) => {
     // Only honour a cookie-based logout from our own site (stops forced logouts)
     const origin = req.headers.origin;
     const originOk = !origin || ALLOWED_ORIGINS.includes(origin);
-    if (payload && originOk) await revokeSessions(pool, payload.userId);
+    // Default: end every session on every device. An inactivity sign-out only
+    // clears THIS device ({scope:"device"}), so being idle on one screen doesn't
+    // log you out of your phone.
+    const deviceOnly = req.body && req.body.scope === "device";
+    if (payload && originOk && !deviceOnly) await revokeSessions(pool, payload.userId);
   } catch (err) {
     console.error("Logout error:", err.message);
   }
   clearSessionCookie(res);
+  clearChallenge(res);
   res.json({ success: true });
+});
+
+// ============= SESSION KEEP-ALIVE =============
+// The browser calls this while the person is actually using the app. It renews
+// the idle window (the session expires after SESSION_IDLE_MINUTES of silence)
+// and never extends the absolute cap. Background requests don't count.
+app.post("/api/session/ping", authenticateToken, (req, res) => {
+  if (req.authViaCookie) renewSession(res, req.user);
+  res.json({ success: true, idleMinutes: IDLE_MINUTES });
 });
 
 // ============= FORGOT PASSWORD =============
