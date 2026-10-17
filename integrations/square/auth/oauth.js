@@ -1,6 +1,7 @@
 // integrations/square/auth/oauth.js
 const crypto = require('crypto');
 const axios = require('axios');
+const { pool } = require('../../../db');
 const { saveTokens, getTokensByMerchant } = require('./tokenStore');
 const { startInitialSync } = require('../sync/initialSync');
 
@@ -21,33 +22,100 @@ const REQUIRED_SCOPES = [
   'INVENTORY_READ',
 ].join(' ');
 
-const stateStore = new Map();
+const FRONTEND = () => process.env.FRONTEND_BASE_URL || 'https://aervoapp.com';
+const backToDashboard = (res, query) => res.redirect(`${FRONTEND()}/dashboard/square?${query}`);
 
-function cleanupStates() {
-  const now = Date.now();
-  for (const [k, v] of stateStore) if (now > v.expiresAt) stateStore.delete(k);
+// Sandbox app ids start with "sandbox-". Sandbox only works with Square TEST
+// seller accounts (and only after launching one from the Developer Console), so
+// real merchants can't connect unless the server runs with production credentials.
+function configProblem() {
+  const appId = process.env.SQUARE_APP_ID || '';
+  const env = process.env.SQUARE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
+  if (!appId || !process.env.SQUARE_APP_SECRET || !process.env.SQUARE_REDIRECT_URI) {
+    return 'SQUARE_APP_ID, SQUARE_APP_SECRET and SQUARE_REDIRECT_URI must all be set';
+  }
+  const appIsSandbox = appId.startsWith('sandbox-');
+  if (env === 'production' && appIsSandbox) return 'SQUARE_ENVIRONMENT is production but SQUARE_APP_ID is a sandbox app id';
+  if (env === 'sandbox' && !appIsSandbox) return 'SQUARE_ENVIRONMENT is sandbox but SQUARE_APP_ID is a production app id';
+  return null;
+}
+
+{
+  const problem = configProblem();
+  const env = process.env.SQUARE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
+  if (problem) console.error(`Square OAuth misconfigured: ${problem}`);
+  else if (env === 'sandbox') console.warn('Square OAuth is in SANDBOX mode: only Square test accounts can connect');
+}
+
+// One-time OAuth states live in the database, so a deploy or restart while a
+// merchant is on Square's consent screen doesn't break their connection.
+const STATE_MINUTES = 10;
+let stateTable;
+function ensureStateTable() {
+  if (!stateTable) {
+    stateTable = pool
+      .query(
+        `CREATE TABLE IF NOT EXISTS square_oauth_states (
+           state_hash  TEXT PRIMARY KEY,
+           merchant_id TEXT NOT NULL,
+           expires_at  TIMESTAMPTZ NOT NULL
+         )`
+      )
+      .catch((err) => {
+        stateTable = null;
+        throw err;
+      });
+  }
+  return stateTable;
+}
+const hashState = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+
+// Returns the Aervo merchant id the state was issued to, or null. Single use.
+async function consumeState(state) {
+  if (typeof state !== 'string' || !/^[a-f0-9]{64}$/.test(state)) return null;
+  await ensureStateTable();
+  const r = await pool.query(
+    `DELETE FROM square_oauth_states WHERE state_hash = $1 RETURNING merchant_id, expires_at`,
+    [hashState(state)]
+  );
+  const row = r.rows[0];
+  return row && new Date(row.expires_at) > new Date() ? row.merchant_id : null;
 }
 
 // POST /integrations/square/connect (authenticateToken)
 // The merchant is the logged-in user. Returns the Square consent URL as JSON;
 // the frontend navigates to it. The one-time state ties the callback back to
 // this user, so nobody can attach a Square account to someone else's id.
-function handleConnectRequest(req, res) {
-  cleanupStates();
-  const merchantId = String(req.user.userId);
+async function handleConnectRequest(req, res) {
+  const problem = configProblem();
+  if (problem) {
+    console.error(`Square connect refused: ${problem}`);
+    return res.status(503).json({ success: false, message: 'Square connections are temporarily unavailable. Please try again later.' });
+  }
+  try {
+    const merchantId = String(req.user.userId);
+    const state = crypto.randomBytes(32).toString('hex');
+    await ensureStateTable();
+    await pool.query(`DELETE FROM square_oauth_states WHERE expires_at < NOW()`);
+    await pool.query(
+      `INSERT INTO square_oauth_states (state_hash, merchant_id, expires_at)
+       VALUES ($1, $2, NOW() + ($3 || ' minutes')::interval)`,
+      [hashState(state), merchantId, String(STATE_MINUTES)]
+    );
 
-  const state = crypto.randomBytes(32).toString('hex');
-  stateStore.set(state, { merchantId, expiresAt: Date.now() + 10 * 60 * 1000 });
+    const params = new URLSearchParams({
+      client_id: process.env.SQUARE_APP_ID,
+      scope: REQUIRED_SCOPES,
+      session: 'false',
+      state,
+      redirect_uri: process.env.SQUARE_REDIRECT_URI,
+    });
 
-  const params = new URLSearchParams({
-    client_id: process.env.SQUARE_APP_ID,
-    scope: REQUIRED_SCOPES,
-    session: 'false',
-    state,
-    redirect_uri: process.env.SQUARE_REDIRECT_URI,
-  });
-
-  res.json({ success: true, url: `${getSquareBase()}/oauth2/authorize?${params}` });
+    res.json({ success: true, url: `${getSquareBase()}/oauth2/authorize?${params}` });
+  } catch (err) {
+    console.error('Square connect start failed', { error: err.message });
+    res.status(500).json({ success: false, message: 'Could not start the Square connection.' });
+  }
 }
 
 async function handleOAuthCallback(req, res) {
@@ -55,17 +123,21 @@ async function handleOAuthCallback(req, res) {
 
   if (error) {
     console.warn('Square OAuth denied by merchant', { error });
-    return res.redirect('https://aervoapp.com/dashboard/square?square=denied');
+    return backToDashboard(res, 'square=denied');
   }
 
-  const stateData = stateStore.get(state);
-  if (!stateData || Date.now() > stateData.expiresAt) {
+  let merchantId;
+  try {
+    merchantId = await consumeState(state);
+  } catch (err) {
+    console.error('Square OAuth state check failed', { error: err.message });
+    return backToDashboard(res, 'square=error');
+  }
+  if (!merchantId) {
     console.warn('Square OAuth invalid or expired state');
-    return res.status(400).json({ error: 'Invalid or expired state parameter' });
+    return backToDashboard(res, 'square=expired');
   }
-
-  const { merchantId } = stateData;
-  stateStore.delete(state);
+  if (!code) return backToDashboard(res, 'square=error');
 
   try {
     const tokenResponse = await axios.post(
@@ -107,7 +179,7 @@ async function handleOAuthCallback(req, res) {
         console.error('Initial Square sync failed', { merchantId, error: err.message })
       );
 
-    res.redirect('https://aervoapp.com/dashboard/square?connected=1');
+    backToDashboard(res, 'connected=1');
 
   } catch (err) {
     console.error('Square OAuth token exchange failed', {
@@ -116,7 +188,7 @@ async function handleOAuthCallback(req, res) {
       error: err.response?.data || err.message,
     });
 
-    res.redirect('https://aervoapp.com/dashboard/square?square=error');
+    backToDashboard(res, 'square=error');
   }
 }
 
