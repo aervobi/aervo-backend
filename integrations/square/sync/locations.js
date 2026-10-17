@@ -1,4 +1,5 @@
 const { pool } = require('../../../db');
+const { jsonSafe } = require('../util');
 
 async function syncLocations({ client, merchantId }) {
   const response = await client.locations.list();
@@ -28,7 +29,7 @@ async function syncLocations({ client, merchantId }) {
         loc.phoneNumber || null,
         JSON.stringify(loc.businessHours || {}),
         loc.currency || 'USD',
-        JSON.stringify(loc),
+        jsonSafe(loc),
       ]
     );
     upserted.push({ squareLocationId: loc.id, name: loc.name });

@@ -1,12 +1,28 @@
 const { pool } = require('../../../db');
 const crypto = require('crypto');
 
-const ENCRYPTION_KEY = Buffer.from(
-  process.env.AERVO_API_SECRET || 'default-dev-key-32-bytes-long!!',
-  'utf8'
-).subarray(0, 32);
+// AES-256 needs exactly 32 bytes. A secret of 32+ bytes is used as before (its
+// first 32 bytes, so tokens already stored keep decrypting); a shorter one is
+// stretched with SHA-256. Production refuses to run without a secret, because a
+// default key would be public in this repo.
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+function encryptionKey() {
+  const secret = process.env.AERVO_API_SECRET || (isProd ? '' : 'aervo-dev-only-square-token-key');
+  if (!secret) throw new Error('AERVO_API_SECRET must be set to store Square tokens');
+  const raw = Buffer.from(secret, 'utf8');
+  return raw.length >= 32 ? raw.subarray(0, 32) : crypto.createHash('sha256').update(raw).digest();
+}
+const ENCRYPTION_KEY = (() => {
+  try {
+    return encryptionKey();
+  } catch (err) {
+    console.error(`Square token encryption unavailable: ${err.message}`);
+    return null;
+  }
+})();
 
 function encrypt(text) {
+  if (!ENCRYPTION_KEY) throw new Error('AERVO_API_SECRET must be set to store Square tokens');
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
   const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
@@ -15,6 +31,7 @@ function encrypt(text) {
 }
 
 function decrypt(encoded) {
+  if (!ENCRYPTION_KEY) throw new Error('AERVO_API_SECRET must be set to read Square tokens');
   const [ivHex, authTagHex, encryptedHex] = encoded.split(':');
   const iv = Buffer.from(ivHex, 'hex');
   const authTag = Buffer.from(authTagHex, 'hex');

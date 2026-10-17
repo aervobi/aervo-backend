@@ -1,6 +1,9 @@
 const { pool } = require('../../../../db');
 
-async function syncOrders({ client, merchantId, locationId, startAt }) {
+// startAt: orders CREATED since then (first sync). updatedSince: orders CHANGED
+// since then (the nightly catch-up, in case a webhook was missed).
+async function syncOrders({ client, merchantId, locationId, startAt, updatedSince }) {
+  const field = updatedSince ? 'updatedAt' : 'createdAt';
   let cursor = undefined;
   let totalSynced = 0;
 
@@ -9,10 +12,10 @@ async function syncOrders({ client, merchantId, locationId, startAt }) {
       locationIds: [locationId],
       query: {
         filter: {
-          dateTimeFilter: { createdAt: { startAt } },
+          dateTimeFilter: { [field]: { startAt: updatedSince || startAt } },
           stateFilter: { states: ['COMPLETED', 'CANCELED', 'OPEN'] },
         },
-        sort: { sortField: 'CREATED_AT', sortOrder: 'ASC' },
+        sort: { sortField: updatedSince ? 'UPDATED_AT' : 'CREATED_AT', sortOrder: 'ASC' },
       },
       limit: 500,
       returnEntries: false,

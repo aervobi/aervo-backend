@@ -331,6 +331,15 @@ cron.schedule(
   { timezone: "UTC" }
 );
 
+// Nightly Square upkeep: refresh tokens before they expire and catch up on any
+// orders a missed webhook would have dropped (integrations/square/sync/maintenance.js)
+const { runSquareMaintenance } = require("./integrations/square/sync/maintenance");
+cron.schedule(
+  "30 3 * * *",
+  () => runSquareMaintenance().catch((err) => console.error("Square maintenance job failed:", err.message)),
+  { timezone: "UTC" }
+);
+
 // Daily business summary email: routes (test button, unsubscribe) + the hourly job
 const dailySummary = require("./routes/dailySummary");
 app.use("/", dailySummary(pool, authenticateToken));

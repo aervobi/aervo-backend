@@ -11,15 +11,18 @@ function getSquareBase() {
     : 'https://connect.squareupsandbox.com';
 }
 
+// Read-only: Aervo never changes a seller's Square data. Appointments and team
+// members feed the bookings dashboard and staffing insights.
 const REQUIRED_SCOPES = [
   'MERCHANT_PROFILE_READ',
   'PAYMENTS_READ',
   'ORDERS_READ',
   'CUSTOMERS_READ',
-  'CUSTOMERS_WRITE',
   'ITEMS_READ',
-
   'INVENTORY_READ',
+  'APPOINTMENTS_READ',
+  'APPOINTMENTS_ALL_READ',
+  'EMPLOYEES_READ',
 ].join(' ');
 
 const FRONTEND = () => process.env.FRONTEND_BASE_URL || 'https://aervoapp.com';
@@ -174,6 +177,10 @@ async function handleOAuthCallback(req, res) {
       scopes: REQUIRED_SCOPES,
     });
 
+    // Tokens are saved, so the connection worked: a status hiccup must not undo that
+    await setConnectionStatus(merchantId, 'syncing', null).catch((err) =>
+      console.warn('Could not mark Square sync as started', { merchantId, error: err.message })
+    );
     startInitialSync({ merchantId, squareMerchantId, accessToken: access_token })
       .catch((err) =>
         console.error('Initial Square sync failed', { merchantId, error: err.message })
@@ -192,6 +199,18 @@ async function handleOAuthCallback(req, res) {
   }
 }
 
+// Square access tokens last 30 days. Refresh well before that so a missed day
+// (downtime, a failed job) never leaves a seller disconnected.
+const REFRESH_WITHIN_DAYS = 7;
+const RECONNECT_MESSAGE = 'Square access expired or was removed. Reconnect Square to resume syncing.';
+
+async function setConnectionStatus(merchantId, status, error) {
+  await pool.query(
+    `UPDATE square_connections SET sync_status = $2, sync_error = $3 WHERE aervo_merchant_id = $1`,
+    [String(merchantId), status, error]
+  );
+}
+
 async function refreshAccessToken(merchantId) {
   const stored = await getTokensByMerchant(merchantId);
 
@@ -199,30 +218,61 @@ async function refreshAccessToken(merchantId) {
     throw new Error(`No refresh token found for merchant ${merchantId}`);
   }
 
-  const response = await axios.post(
-    `${getSquareBase()}/oauth2/token`,
-    {
-      client_id: process.env.SQUARE_APP_ID,
-      client_secret: process.env.SQUARE_APP_SECRET,
-      refresh_token: stored.refreshToken,
-      grant_type: 'refresh_token',
-    },
-    {
-      headers: { 'Content-Type': 'application/json', 'Square-Version': '2024-01-18' },
+  let response;
+  try {
+    response = await axios.post(
+      `${getSquareBase()}/oauth2/token`,
+      {
+        client_id: process.env.SQUARE_APP_ID,
+        client_secret: process.env.SQUARE_APP_SECRET,
+        refresh_token: stored.refreshToken,
+        grant_type: 'refresh_token',
+      },
+      {
+        headers: { 'Content-Type': 'application/json', 'Square-Version': '2024-01-18' },
+        timeout: 15000,
+      }
+    );
+  } catch (err) {
+    const status = err.response?.status;
+    // 400/401: the seller revoked access or the refresh token is no longer valid
+    if (status === 400 || status === 401) {
+      await setConnectionStatus(merchantId, 'reconnect_required', RECONNECT_MESSAGE);
+      err.reconnectRequired = true;
     }
-  );
+    throw err;
+  }
 
   const { access_token, refresh_token, expires_at } = response.data;
 
   await saveTokens({
     ...stored,
     accessToken: access_token,
-    refreshToken: refresh_token,
+    refreshToken: refresh_token || stored.refreshToken, // Square may not send a new one
     expiresAt: new Date(expires_at),
   });
 
   console.log('Square access token refreshed', { merchantId });
   return access_token;
+}
+
+// A working access token for this merchant (refreshed first if it's close to
+// expiring), or null if they never connected. Throws if Square says reconnect.
+async function getValidAccessToken(merchantId) {
+  const stored = await getTokensByMerchant(String(merchantId));
+  if (!stored) return null;
+  const msLeft = new Date(stored.expiresAt).getTime() - Date.now();
+  if (msLeft > REFRESH_WITHIN_DAYS * 86400000) return stored.accessToken;
+  try {
+    return await refreshAccessToken(String(merchantId));
+  } catch (err) {
+    // A temporary failure while the old token still works: keep using it
+    if (!err.reconnectRequired && msLeft > 5 * 60 * 1000) {
+      console.warn('Square token refresh failed, using current token', { merchantId, error: err.message });
+      return stored.accessToken;
+    }
+    throw err;
+  }
 }
 
 // Tell Square to revoke the access token, so a disconnect really ends access
@@ -252,4 +302,12 @@ async function revokeAccessToken(accessToken) {
   }
 }
 
-module.exports = { handleConnectRequest, handleOAuthCallback, refreshAccessToken, revokeAccessToken };
+module.exports = {
+  handleConnectRequest,
+  handleOAuthCallback,
+  refreshAccessToken,
+  getValidAccessToken,
+  setConnectionStatus,
+  revokeAccessToken,
+  REFRESH_WITHIN_DAYS,
+};

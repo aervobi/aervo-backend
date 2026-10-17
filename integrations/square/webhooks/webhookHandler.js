@@ -4,9 +4,37 @@ const { upsertOrders } = require('../sync/orders/syncOrders');
 const { upsertCustomers } = require('../sync/customers/syncCustomers');
 const { upsertAppointments } = require('../sync/appointments/syncAppointments');
 const { syncCatalog } = require('../sync/catalog/syncCatalog');
-const { getTokensByMerchant } = require('../auth/tokenStore');
+const { deleteTokens } = require('../auth/tokenStore');
+const { getValidAccessToken } = require('../auth/oauth');
 const { buildSquareClient } = require('../client');
+const { camelize, cents, jsonSafe } = require('../util');
 const { pool } = require('../../../db');
+
+// Tables only webhooks write to. Created here so a fresh database works.
+let extraTables;
+function ensureWebhookTables() {
+  if (!extraTables) {
+    extraTables = (async () => {
+      await pool.query(`CREATE TABLE IF NOT EXISTS square_payments (
+        square_payment_id TEXT PRIMARY KEY, aervo_merchant_id TEXT NOT NULL, square_order_id TEXT,
+        square_customer_id TEXT, amount BIGINT, tip_amount BIGINT, currency TEXT, status TEXT,
+        source_type TEXT, card_brand TEXT, location_id TEXT, created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ, raw_data JSONB)`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS square_inventory (
+        aervo_merchant_id TEXT NOT NULL, catalog_object_id TEXT NOT NULL, location_id TEXT NOT NULL,
+        quantity NUMERIC, status TEXT, calculated_at TIMESTAMPTZ,
+        PRIMARY KEY (aervo_merchant_id, catalog_object_id, location_id))`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS square_team_members (
+        square_team_member_id TEXT PRIMARY KEY, aervo_merchant_id TEXT NOT NULL, given_name TEXT,
+        family_name TEXT, status TEXT, email_address TEXT, phone_number TEXT,
+        created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, raw_data JSONB)`);
+    })().catch((err) => {
+      extraTables = null;
+      console.error('Could not create Square webhook tables:', err.message);
+    });
+  }
+  return extraTables;
+}
 
 function verifyWebhookSignature(body, signature, notificationUrl) {
   const signingKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
@@ -54,17 +82,34 @@ async function handleWebhookEvent(req, res) {
 }
 
 async function processEvent(event) {
-  const { type, merchant_id: squareMerchantId, data } = event;
+  const { type, merchant_id: squareMerchantId } = event;
+  // Square sends snake_case JSON; our upserts (like the SDK) use camelCase
+  const data = camelize(event.data || {});
   console.log('Processing Square webhook:', type);
 
-  const tokens = await getTokensBySquareMerchant(squareMerchantId);
-  if (!tokens) {
+  const aervMerchantId = await aervoIdForSquareMerchant(squareMerchantId);
+  if (!aervMerchantId) {
     console.warn('Received webhook for unknown Square merchant', { squareMerchantId });
     return;
   }
 
-  const { aervMerchantId, accessToken } = tokens;
-  const client = buildSquareClient(accessToken);
+  // The seller removed Aervo in their Square dashboard: forget the tokens
+  if (type === 'oauth.authorization.revoked') {
+    await deleteTokens(aervMerchantId);
+    console.log('Square access revoked by seller; tokens removed', { aervMerchantId });
+    return;
+  }
+
+  await ensureWebhookTables();
+  let client = null;
+  const squareClient = async () => {
+    if (!client) {
+      const token = await getValidAccessToken(aervMerchantId);
+      if (!token) throw new Error('No Square token for merchant');
+      client = buildSquareClient(token);
+    }
+    return client;
+  };
 
   switch (type) {
 
@@ -72,31 +117,30 @@ async function processEvent(event) {
     case 'order.created':
     case 'order.updated':
     case 'order.fulfillment.updated': {
-      const orderId = data?.object?.order_created?.order_id ||
-                      data?.object?.order_updated?.order_id ||
-                      data?.id;
-      if (orderId) await syncSingleOrder(client, aervMerchantId, orderId);
+      const o = data.object || {};
+      const orderId = o.orderCreated?.orderId || o.orderUpdated?.orderId || o.orderFulfillmentUpdated?.orderId || data.id;
+      if (orderId) await syncSingleOrder(await squareClient(), aervMerchantId, orderId);
       break;
     }
 
     // ── Payments ──────────────────────────────────────────────────────────────
     case 'payment.created':
     case 'payment.updated': {
-      const payment = data?.object?.payment;
-      if (payment?.orderId) await syncSingleOrder(client, aervMerchantId, payment.orderId);
+      const payment = data.object?.payment;
       if (payment) await upsertPayment(payment, aervMerchantId);
+      if (payment?.orderId) await syncSingleOrder(await squareClient(), aervMerchantId, payment.orderId);
       break;
     }
 
     // ── Customers ─────────────────────────────────────────────────────────────
     case 'customer.created':
     case 'customer.updated': {
-      const customer = data?.object?.customer;
+      const customer = data.object?.customer;
       if (customer) await upsertCustomers([customer], aervMerchantId);
       break;
     }
     case 'customer.deleted': {
-      const customerId = data?.object?.customer?.id;
+      const customerId = data.object?.customer?.id || data.id;
       if (customerId) await softDeleteCustomer(aervMerchantId, customerId);
       break;
     }
@@ -104,12 +148,12 @@ async function processEvent(event) {
     // ── Appointments ──────────────────────────────────────────────────────────
     case 'booking.created':
     case 'booking.updated': {
-      const booking = data?.object?.booking;
+      const booking = data.object?.booking;
       if (booking) await upsertAppointments([booking], aervMerchantId, booking.locationId);
       break;
     }
     case 'booking.cancelled': {
-      const booking = data?.object?.booking;
+      const booking = data.object?.booking;
       if (booking) await upsertAppointments([{ ...booking, status: 'CANCELLED' }], aervMerchantId, booking.locationId);
       break;
     }
@@ -117,13 +161,13 @@ async function processEvent(event) {
     // ── Catalog / Menu ────────────────────────────────────────────────────────
     case 'catalog.version.updated': {
       console.log('Catalog updated, triggering re-sync', { aervMerchantId });
-      await syncCatalog({ client, merchantId: aervMerchantId });
+      await syncCatalog({ client: await squareClient(), merchantId: aervMerchantId });
       break;
     }
 
     // ── Inventory ─────────────────────────────────────────────────────────────
     case 'inventory.count.updated': {
-      const counts = data?.object?.counts || [];
+      const counts = data.object?.inventoryCounts || data.object?.counts || [];
       if (counts.length) await upsertInventoryCounts(counts, aervMerchantId);
       break;
     }
@@ -131,7 +175,7 @@ async function processEvent(event) {
     // ── Team Members / Staff ──────────────────────────────────────────────────
     case 'team_member.created':
     case 'team_member.updated': {
-      const teamMember = data?.object?.team_member;
+      const teamMember = data.object?.teamMember;
       if (teamMember) await upsertTeamMember(teamMember, aervMerchantId);
       break;
     }
@@ -142,9 +186,9 @@ async function processEvent(event) {
 }
 
 async function syncSingleOrder(client, merchantId, orderId) {
-  const response = await client.ordersApi.retrieveOrder(orderId);
-  if (response.result.order) {
-    await upsertOrders([response.result.order], merchantId, response.result.order.locationId);
+  const response = await client.orders.get({ orderId });
+  if (response.order) {
+    await upsertOrders([response.order], merchantId, response.order.locationId);
   }
 }
 
@@ -167,13 +211,13 @@ async function upsertPayment(payment, merchantId) {
        status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, raw_data=EXCLUDED.raw_data`,
     [
       payment.id, merchantId, payment.orderId || null, payment.customerId || null,
-      payment.amountMoney?.amount || 0, payment.tipMoney?.amount || 0,
+      cents(payment.amountMoney?.amount), cents(payment.tipMoney?.amount),
       payment.amountMoney?.currency || 'USD', payment.status,
       payment.sourceType || null,
       payment.cardDetails?.card?.cardBrand || null,
       payment.locationId || null,
       payment.createdAt, payment.updatedAt,
-      JSON.stringify(payment),
+      jsonSafe(payment),
     ]
   ).catch(err => console.warn('Could not upsert payment:', err.message));
 }
@@ -207,18 +251,18 @@ async function upsertTeamMember(member, merchantId) {
     [
       member.id, merchantId, member.givenName || null, member.familyName || null,
       member.status || null, member.emailAddress || null, member.phoneNumber || null,
-      member.createdAt, member.updatedAt, JSON.stringify(member),
+      member.createdAt, member.updatedAt, jsonSafe(member),
     ]
   ).catch(err => console.warn('Could not upsert team member:', err.message));
 }
 
-async function getTokensBySquareMerchant(squareMerchantId) {
+async function aervoIdForSquareMerchant(squareMerchantId) {
+  if (!squareMerchantId) return null;
   const result = await pool.query(
     `SELECT aervo_merchant_id FROM square_connections WHERE square_merchant_id = $1`,
     [squareMerchantId]
   );
-  if (!result.rows.length) return null;
-  return await getTokensByMerchant(result.rows[0].aervo_merchant_id);
+  return result.rows[0]?.aervo_merchant_id || null;
 }
 
-module.exports = { handleWebhookEvent, verifyWebhookSignature };
+module.exports = { handleWebhookEvent, verifyWebhookSignature, processEvent };

@@ -1,22 +1,13 @@
 const { pool } = require('../../../../db');
+const { collectPages, jsonSafe } = require('../../util');
 
 async function syncCustomers({ client, merchantId }) {
-  let cursor = undefined;
-  let totalSynced = 0;
-
-  do {
-    const response = await client.customers.list(cursor ? { cursor, sortField: "CREATED_AT", sortOrder: "ASC" } : { sortField: "CREATED_AT", sortOrder: "ASC" });
-    const customers = response.data || response.customers || [];
-    cursor = response.cursor || response.rawResponse?.cursor || undefined;
-
-    if (customers.length) {
-      await upsertCustomers(customers, merchantId);
-      totalSynced += customers.length;
-    }
-  } while (cursor);
-
-  console.log(`Customers sync complete: ${totalSynced} customers`);
-  return totalSynced;
+  const customers = await collectPages(client.customers.list({ sortField: 'CREATED_AT', sortOrder: 'ASC', limit: 100 }));
+  for (let i = 0; i < customers.length; i += 500) {
+    await upsertCustomers(customers.slice(i, i + 500), merchantId);
+  }
+  console.log(`Customers sync complete: ${customers.length} customers`);
+  return customers.length;
 }
 
 async function upsertCustomers(customers, merchantId) {
@@ -40,7 +31,7 @@ async function upsertCustomers(customers, merchantId) {
           c.emailAddress || null, c.phoneNumber || null, c.birthday || null,
           c.address ? JSON.stringify(c.address) : null, c.note || null,
           c.referenceId || null, c.creationSource || null,
-          c.createdAt, c.updatedAt, null, null, null, JSON.stringify(c, (key, value) => typeof value === "bigint" ? value.toString() : value),
+          c.createdAt, c.updatedAt, null, null, null, jsonSafe(c),
         ]
       );
     }

@@ -20,6 +20,10 @@ async function startInitialSync({ merchantId, squareMerchantId, accessToken }) {
   const startAt = beginDate.toISOString();
 
   try {
+    await pool.query(
+      `UPDATE square_connections SET sync_status = 'syncing', sync_error = NULL WHERE aervo_merchant_id = $1`,
+      [merchantId]
+    );
     console.log('Syncing locations...');
     const locations = await syncLocations({ client, merchantId });
     const locationIds = locations.map((l) => l.squareLocationId);

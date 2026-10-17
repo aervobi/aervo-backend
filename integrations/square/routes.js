@@ -46,6 +46,7 @@ router.get('/status', authenticateToken, async (req, res) => {
 
     res.json({
       connected: true,
+      needsReconnect: syncRow.sync_status === 'reconnect_required',
       squareMerchantId: tokens.squareMerchantId,
       connectedAt: tokens.connectedAt,
       tokenExpiresAt: tokens.expiresAt,

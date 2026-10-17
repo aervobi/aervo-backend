@@ -1,22 +1,13 @@
 const { pool } = require('../../../../db');
+const { collectPages, jsonSafe, cents } = require('../../util');
 
 async function syncCatalog({ client, merchantId }) {
-  let cursor = undefined;
-  let totalSynced = 0;
-
-  do {
-    const response = await client.catalog.list({ cursor, types: 'ITEM,CATEGORY,ITEM_VARIATION' });
-    const objects = response.objects || [];
-    cursor = response.cursor || undefined;
-
-    if (objects.length) {
-      await upsertCatalogObjects(objects, merchantId);
-      totalSynced += objects.length;
-    }
-  } while (cursor);
-
-  console.log(`Catalog sync complete: ${totalSynced} objects`);
-  return totalSynced;
+  const objects = await collectPages(client.catalog.list({ types: 'ITEM,CATEGORY,ITEM_VARIATION' }));
+  for (let i = 0; i < objects.length; i += 500) {
+    await upsertCatalogObjects(objects.slice(i, i + 500), merchantId);
+  }
+  console.log(`Catalog sync complete: ${objects.length} objects`);
+  return objects.length;
 }
 
 async function upsertCatalogObjects(objects, merchantId) {
@@ -38,12 +29,14 @@ async function upsertCatalogObjects(objects, merchantId) {
         const d = obj.itemData || {};
         name = d.name; description = d.description || null;
         categoryId = d.categoryId || null;
-        basePrice = d.variations?.[0]?.itemVariationData?.priceMoney?.amount || null;
+        const p = d.variations?.[0]?.itemVariationData?.priceMoney?.amount;
+        basePrice = p == null ? null : cents(p);
       } else if (obj.type === 'CATEGORY') {
         name = obj.categoryData?.name;
       } else if (obj.type === 'ITEM_VARIATION') {
         name = obj.itemVariationData?.name;
-        basePrice = obj.itemVariationData?.priceMoney?.amount || null;
+        const p = obj.itemVariationData?.priceMoney?.amount;
+        basePrice = p == null ? null : cents(p);
       }
 
       await dbClient.query(
@@ -55,7 +48,7 @@ async function upsertCatalogObjects(objects, merchantId) {
            name=EXCLUDED.name, description=EXCLUDED.description,
            base_price_cents=EXCLUDED.base_price_cents, is_deleted=EXCLUDED.is_deleted,
            updated_at=NOW(), raw_data=EXCLUDED.raw_data`,
-        [obj.id, merchantId, obj.type, name, description, basePrice, categoryId, false, JSON.stringify(obj)]
+        [obj.id, merchantId, obj.type, name, description, basePrice, categoryId, false, jsonSafe(obj)]
       );
     }
     await dbClient.query('COMMIT');
