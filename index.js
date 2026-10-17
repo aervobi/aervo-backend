@@ -262,6 +262,9 @@ app.use("/", onboardingRoutes);
 const userRoutes = require("./routes/user")(pool, authenticateToken);
 app.use("/", userRoutes);
 
+// Founder-only: switch your own plan without paying (FOUNDER_EMAILS)
+app.use("/", require("./routes/founder")(pool, authenticateToken));
+
 // Teams: members, roles and invites (Pro/Business)
 app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }));
 

@@ -30,6 +30,7 @@ const upload = multer({
 const { signSession, setSessionCookie, clearSessionCookie, revokeSessions } = require("../middleware/auth");
 const { isValidTimeZone } = require("../utils/tzdate");
 const { teamSummaryFor } = require("./team");
+const { isFounder } = require("./founder");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -103,6 +104,7 @@ module.exports = (pool, authenticateToken) => {
     createdAt:      user.created_at,
     lastLogin:      user.last_login,
     plan:           user.plan || 'free',
+    isFounder:      isFounder(user),
     squareMerchantId: user.square_merchant_id,
   },
   team, // { id, name, role } or null
