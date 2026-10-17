@@ -262,6 +262,9 @@ app.use("/", onboardingRoutes);
 const userRoutes = require("./routes/user")(pool, authenticateToken);
 app.use("/", userRoutes);
 
+// Teams: members, roles and invites (Pro/Business)
+app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }));
+
 const unifiedRoutes = require("./routes/unified");
 app.use("/api/unified", unifiedRoutes);
 

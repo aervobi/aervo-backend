@@ -753,6 +753,93 @@ async function sendDailySummaryEmail({ to, subject, html, text, headers }) {
   return safeSend({ to, subject, html, text, headers, strict: true });
 }
 
+// ============= TEAM INVITE =============
+// Team and inviter names are typed by users, so they are escaped before going
+// into the HTML.
+function escapeHtml(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildTeamInviteEmail({ teamName, inviterName, role, joinUrl, expiresDays }) {
+  const year = new Date().getFullYear();
+  const team = escapeHtml(teamName);
+  const inviter = escapeHtml(inviterName || "A teammate");
+  const roleLabel = role === "supervisor" ? "a supervisor" : "a member";
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Join ${team} on Aervo</title>
+</head>
+<body style="margin:0; padding:0; background:#020617; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;">
+  <table width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px; background:#020617;">
+    <tr>
+      <td align="center">
+        <table width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#020617;border-radius:24px;border:1px solid #111827;box-shadow:0 30px 80px rgba(15,23,42,0.75);overflow:hidden;">
+          <tr>
+            <td align="center" style="padding:26px 32px 6px; background:#020617;">
+              <img src="https://aervoapp.com/assets/images/aervo-wordmark.png" alt="Aervo" width="220"
+                style="display:block; margin:0 auto; max-width:220px; height:auto;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 32px 10px; background:#020617;" align="left">
+              <h1 style="margin:0 0 10px 0;font-size:26px;line-height:1.3;color:#f9fafb;font-weight:650;">
+                You're invited to join ${team}
+              </h1>
+              <p style="margin:0;font-size:14px;line-height:1.7;color:#cbd5f5;">
+                ${inviter} invited you to join their team on Aervo as ${roleLabel}.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 32px 18px 32px;" align="left">
+              <a href="${joinUrl}" style="display:inline-block;padding:12px 24px;border-radius:999px;background:linear-gradient(135deg,#29c8ff,#7c5cff);color:#050816;text-decoration:none;font-size:14px;font-weight:700;">Accept invite →</a>
+              <p style="margin:14px 0 0; font-size:12px; line-height:1.6; color:#9ca3af;">
+                This invite expires in ${expiresDays} days. If the button doesn't work, copy this link into your browser:
+                <br />
+                <span style="color:#a5b4fc; word-break:break-all;">${joinUrl}</span>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 32px 20px 32px;border-top:1px solid #111827;font-size:11px;color:#6b7280;">
+              If you weren't expecting this, you can safely ignore this email.
+              <br /><br />© ${year} Aervo. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+  const text = `${inviterName || "A teammate"} invited you to join ${teamName} on Aervo as ${roleLabel}.
+
+Accept the invite: ${joinUrl}
+
+This invite expires in ${expiresDays} days. If you weren't expecting it, ignore this email.
+© ${year} Aervo`;
+
+  return { subject: `Join ${teamName} on Aervo`, html, text };
+}
+
+// strict: the caller tells the inviter whether the email really went out
+async function sendTeamInviteEmail({ toEmail, ...opts }) {
+  const { subject, html, text } = buildTeamInviteEmail(opts);
+  return safeSend({ to: toEmail, subject, html, text, strict: true });
+}
+
 module.exports = {
   initSendgrid,
   sendWelcomeEmail,
@@ -761,4 +848,6 @@ module.exports = {
   sendAlertEmail,
   sendWeeklyDigestEmail,
   sendDailySummaryEmail,
+  sendTeamInviteEmail,
+  buildTeamInviteEmail,
 };

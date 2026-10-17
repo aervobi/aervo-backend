@@ -29,6 +29,7 @@ const upload = multer({
 
 const { signSession, setSessionCookie, clearSessionCookie, revokeSessions } = require("../middleware/auth");
 const { isValidTimeZone } = require("../utils/tzdate");
+const { teamSummaryFor } = require("./team");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -80,6 +81,8 @@ module.exports = (pool, authenticateToken) => {
         }
       }
 
+      const team = await teamSummaryFor(pool, req.user.userId);
+
       return res.json({
   success: true,
   user: {
@@ -102,6 +105,8 @@ module.exports = (pool, authenticateToken) => {
     plan:           user.plan || 'free',
     squareMerchantId: user.square_merchant_id,
   },
+  team, // { id, name, role } or null
+
   shop: activeStore ? {
     shopOrigin:  activeStore.store_origin,
     installedAt: activeStore.connected_at,

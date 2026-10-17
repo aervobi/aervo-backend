@@ -13,6 +13,7 @@ const PLANS = {
     whiteLabel: false,
     competitorBenchmarking: false,
     maxLocations: 1,
+    teamSeats: 0, // people on the team, owner and pending invites included
   },
   essential: {
     name: "Essential",
@@ -28,6 +29,7 @@ const PLANS = {
     whiteLabel: false,
     competitorBenchmarking: false,
     maxLocations: 1,
+    teamSeats: 0, // people on the team, owner and pending invites included
   },
   pro: {
     name: "Pro",
@@ -43,6 +45,7 @@ const PLANS = {
     whiteLabel: false,
     competitorBenchmarking: false,
     maxLocations: 2,
+    teamSeats: 10, // people on the team, owner and pending invites included
   },
   business: {
     name: "Business",
@@ -58,6 +61,7 @@ const PLANS = {
     whiteLabel: true,
     competitorBenchmarking: true,
     maxLocations: 5,
+    teamSeats: 50, // people on the team, owner and pending invites included
   },
 };
 
