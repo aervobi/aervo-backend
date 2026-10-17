@@ -37,6 +37,14 @@ router.get('/auth/google', (req, res) => {
 
 // ============= GOOGLE SIGN IN - Callback =============
 router.get('/auth/google/callback', async (req, res) => {
+  // Google may send people back to the Render hostname (the registered redirect
+  // URL), but the state cookie and the session belong to the public API host. Hop
+  // there first, unchanged, so the cookie is sent and the session lands where the
+  // site can use it. The code exchange still uses REDIRECT_URL, as Google requires.
+  const publicApi = new URL(process.env.API_PUBLIC_URL || 'https://api.aervoapp.com');
+  if (isProd && req.get('host') !== publicApi.host) {
+    return res.redirect(302, publicApi.origin + req.originalUrl);
+  }
   try {
     const { code, error, state } = req.query;
     const expected = readCookie(req, STATE_COOKIE);
