@@ -24,6 +24,7 @@ _Last reviewed: 2026-10-17 (Local Market phase 1 added)_
 | Team seats | 0 | 0 | 10 | 50 | Team invites (`routes/team.js`) |
 | Local market snapshot (Census + AI local angle) | No | Yes | Yes | Yes | `/api/market/snapshot` (`marketSnapshot`) |
 | 7-day demand forecast | No | No | Yes | Yes | `/api/market/forecast` (`demandForecast`) |
+| Weekly AI market briefing (web search, cited) | No | Yes | Yes | Yes | `/api/market/briefing` (`weeklyBriefing`); Pro also gets a "your week" item from its forecast |
 | 14-day Pro trial (card billing) | | | Once per account | | Stripe checkout (`pro_trial_used_at`) |
 
 Notes:
@@ -46,7 +47,6 @@ Marked "coming soon" on the pricing pages until they ship.
 | Staff performance scores | Pro | Square team members are now synced; needs sales per staff + scoring |
 | Unified customer view (page) | Pro | API exists (`/api/unified/overview`, now Pro+); no page uses it yet |
 | White-label reports | Business | Reports exist and logo upload exists; reports need the company logo/name and no Aervo branding; gate with `whiteLabel` |
-| Local Market: weekly AI briefing | Essential+ | AI with web search, cached per area + category; needs a search-enabled model call |
 | Local Market: competitor radar + trending near you | Pro | Google Places API (billing must be on); review themes by AI |
 | Local Market: opportunities | Pro | Built from snapshot + competitors + the store's own sales |
 | Local events in the forecast | Pro | Events API key (Ticketmaster Discovery free, or PredictHQ paid) |

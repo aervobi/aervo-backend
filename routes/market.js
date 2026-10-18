@@ -4,6 +4,8 @@
 //   PUT  /api/market/area       set it by ZIP (or city + state) and/or category
 //   GET  /api/market/snapshot   public data about the area (Census ACS) + an AI "local angle"   [marketSnapshot]
 //   GET  /api/market/forecast   7-day expected traffic: weather + paydays + holidays + own sales [demandForecast]
+//   GET  /api/market/briefing   "This week in <city>": AI briefing with web search + sources   [weeklyBriefing]
+//                               (+ a "your week" item from the store's own forecast on Pro)
 //
 // Area: the owner's choice, else their Square location's ZIP, else the free-text
 // location from their profile. ZIPs are looked up on zippopotam.us and city names
@@ -18,6 +20,8 @@ const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
 const { requireFeature } = require("../utils/planAccess");
 const { buildForecast } = require("../utils/demandForecast");
+const { generateBriefing } = require("../utils/marketBriefing");
+const PLANS = require("../config/plans");
 const { CHAT_MODEL, replyText } = require("../utils/aiModels");
 
 const CATEGORIES = {
@@ -72,6 +76,18 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
       source     TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+    // One weekly briefing per ZIP + category, shared by every matching store
+    await pool.query(`CREATE TABLE IF NOT EXISTS market_briefings (
+      key        TEXT PRIMARY KEY,          -- zip:category:weekStart
+      zip        TEXT NOT NULL,
+      category   TEXT NOT NULL,
+      week_start DATE NOT NULL,
+      status     TEXT NOT NULL,             -- preparing | ready | failed
+      data       JSONB,
+      error      TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
     await pool.query(`CREATE TABLE IF NOT EXISTS market_cache (
       key        TEXT PRIMARY KEY,
       data       JSONB NOT NULL,
@@ -80,7 +96,15 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
   })().catch((err) => console.error("Market tables could not be created:", err.message));
   router.use("/api/market", (req, res, next) => ready.then(() => next()));
 
-  async function cached(key, ttlMs, load) {
+  // Requests that need the same uncached thing at the same moment share one lookup
+  const inflight = new Map();
+  function cached(key, ttlMs, load) {
+    if (inflight.has(key)) return inflight.get(key);
+    const p = cachedOnce(key, ttlMs, load).finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    return p;
+  }
+  async function cachedOnce(key, ttlMs, load) {
     const hit = await pool.query(`SELECT data FROM market_cache WHERE key = $1 AND expires_at > NOW()`, [key]);
     if (hit.rows[0]) return hit.rows[0].data;
     const data = await load();
@@ -433,37 +457,174 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     return { history, hours: hours.map((h) => ({ hour: Number(h.hour), sales: Number(h.sales) || 0 })), source };
   }
 
+  // The 7-day forecast for one store (also used for the briefing's "your week" item)
+  async function forecastFor(userId, a) {
+    const ahead = await weatherAhead(a);
+    const tz = ahead.timezone || a.timezone || "UTC";
+    if (ahead.timezone && ahead.timezone !== a.timezone) {
+      await pool.query(`UPDATE market_profiles SET timezone = $2 WHERE user_id = $1`, [userId, ahead.timezone]);
+    }
+    const { history, hours, source } = await salesHistory(userId, tz);
+    let historyWeather = {};
+    if (history.length) {
+      // The weather archive lags a few days behind today
+      const end = new Date(Date.now() - 3 * DAYS).toISOString().slice(0, 10);
+      const start = history[0].date;
+      if (start < end) historyWeather = await weatherPast(a, start, end).catch(() => ({}));
+    }
+    const forecast = buildForecast({ history, historyWeather, days: ahead.days, hours });
+    return {
+      timezone: tz,
+      salesSource: source,
+      ...forecast,
+      sources: ["Weather: Open-Meteo", source ? `Your ${source === "square" ? "Square" : "IMS"} sales, last ${history.length} days` : null].filter(Boolean),
+    };
+  }
+
   router.get("/api/market/forecast", authenticateToken, requireFeature(pool, "demandForecast"), async (req, res) => {
     try {
       const a = await areaFor(req.user.userId);
       if (!a) return res.json({ success: true, needsSetup: true });
-      const ahead = await weatherAhead(a);
-      const tz = ahead.timezone || a.timezone || "UTC";
-      if (ahead.timezone && ahead.timezone !== a.timezone) {
-        await pool.query(`UPDATE market_profiles SET timezone = $2 WHERE user_id = $1`, [req.user.userId, ahead.timezone]);
-      }
-      const { history, hours, source } = await salesHistory(req.user.userId, tz);
-      let historyWeather = {};
-      if (history.length) {
-        // The weather archive lags a few days behind today
-        const end = new Date(Date.now() - 3 * DAYS).toISOString().slice(0, 10);
-        const start = history[0].date;
-        if (start < end) historyWeather = await weatherPast(a, start, end).catch(() => ({}));
-      }
-      const forecast = buildForecast({ history, historyWeather, days: ahead.days, hours });
-      res.json({
-        success: true,
-        area: publicArea(a),
-        timezone: tz,
-        salesSource: source,
-        ...forecast,
-        sources: ["Weather: Open-Meteo", source ? `Your ${source === "square" ? "Square" : "IMS"} sales, last ${history.length} days` : null].filter(Boolean),
-      });
+      res.json({ success: true, area: publicArea(a), ...(await forecastFor(req.user.userId, a)) });
     } catch (err) {
       console.error("Market forecast error:", err.message);
       res.status(500).json({ success: false, message: "Couldn't build the forecast right now." });
     }
   });
+
+  // ── weekly briefing ─────────────────────────────────────────────────────────
+  const PREPARING_TIMEOUT_MS = 15 * 60 * 1000; // a stuck "preparing" can be retried after this
+  const FAILED_RETRY_MS = 6 * HOURS; // don't hammer the AI if a briefing keeps failing
+
+  // Monday-Sunday of the current week in the store's time zone
+  function weekOf(tz) {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: tz || "UTC" });
+    const d = new Date(today + "T12:00:00Z");
+    const back = (d.getUTCDay() + 6) % 7; // days since Monday
+    const start = new Date(d.getTime() - back * DAYS);
+    const end = new Date(start.getTime() + 6 * DAYS);
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+
+  const briefingKey = (a, week) => `${a.zip}:${a.category}:${week.start}`;
+
+  async function runGeneration(key, a, week) {
+    try {
+      const data = await generateBriefing({
+        anthropic,
+        area: { city: a.city, state: a.state, zip: a.zip, timezone: a.timezone },
+        categoryLabel: CATEGORIES[a.category] || CATEGORIES.other,
+        weekStart: week.start,
+        weekEnd: week.end,
+      });
+      await pool.query(
+        `UPDATE market_briefings SET status = 'ready', data = $2, error = NULL, updated_at = NOW() WHERE key = $1`,
+        [key, JSON.stringify({ ...data, generatedAt: new Date().toISOString() })]
+      );
+      console.log("Market briefing ready", { key, items: data.items.length, searched: data.searched, usage: data.usage });
+    } catch (err) {
+      console.error("Market briefing failed", { key, error: err.message });
+      await pool
+        .query(`UPDATE market_briefings SET status = 'failed', error = $2, updated_at = NOW() WHERE key = $1`, [key, String(err.message).slice(0, 300)])
+        .catch(() => {});
+    }
+  }
+
+  // Returns the briefing row, starting a generation (in the background) when
+  // there's none yet for this week, a stuck one, or an old failure. The claim
+  // is one atomic statement, so two requests can't start the same briefing.
+  async function ensureBriefing(a, { wait = false } = {}) {
+    const week = weekOf(a.timezone);
+    const key = briefingKey(a, week);
+    const claimed = await pool.query(
+      `INSERT INTO market_briefings (key, zip, category, week_start, status)
+       VALUES ($1, $2, $3, $4, 'preparing')
+       ON CONFLICT (key) DO UPDATE SET status = 'preparing', error = NULL, updated_at = NOW()
+         WHERE (market_briefings.status = 'preparing' AND market_briefings.updated_at < NOW() - ($5 || ' milliseconds')::interval)
+            OR (market_briefings.status = 'failed' AND market_briefings.updated_at < NOW() - ($6 || ' milliseconds')::interval)
+       RETURNING key`,
+      [key, a.zip, a.category, week.start, String(PREPARING_TIMEOUT_MS), String(FAILED_RETRY_MS)]
+    );
+    if (claimed.rows.length) {
+      const job = runGeneration(key, a, week);
+      if (wait) await job;
+    }
+    const row = (await pool.query(`SELECT status, data, updated_at FROM market_briefings WHERE key = $1`, [key])).rows[0];
+    return { week, row };
+  }
+
+  // The store's own week, from its forecast: the busiest and slowest days ahead
+  function yourWeekItem(fc) {
+    const days = (fc.days || []).filter((d) => d.pct != null && !d.closed);
+    if (!days.length || fc.basis.confidence === "none") return null;
+    const best = days.reduce((x, y) => (y.pct > x.pct ? y : x));
+    const worst = days.reduce((x, y) => (y.pct < x.pct ? y : x));
+    const fmtDay = (d) => new Date(d.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+    let body = `${fmtDay(best)} looks like your busiest day (${best.pct >= 0 ? "+" : ""}${best.pct}% vs an average day)`;
+    const why = best.reasons.filter((r) => r.kind !== "weekday").map((r) => r.text.toLowerCase());
+    if (why.length) body += `, helped by ${why.join(" and ")}`;
+    body += ".";
+    if (worst !== best && worst.pct <= -8) body += ` ${fmtDay(worst)} looks slowest (${worst.pct}%).`;
+    return {
+      kind: "yours",
+      title: `Your week: ${fmtDay(best)} is the day to be ready for`,
+      body,
+      action: best.action || "",
+      date: best.date,
+      sources: [{ url: null, title: fc.sources.join(" · ") }],
+    };
+  }
+
+  router.get("/api/market/briefing", authenticateToken, requireFeature(pool, "weeklyBriefing"), async (req, res) => {
+    try {
+      const a = await areaFor(req.user.userId);
+      if (!a) return res.json({ success: true, needsSetup: true });
+      if (!a.zip) return res.json({ success: true, area: publicArea(a), unavailable: "Add your store's ZIP code to get a weekly briefing." });
+      if (!anthropic) return res.json({ success: true, area: publicArea(a), unavailable: "Weekly briefings are being set up. Check back soon." });
+
+      const { week, row } = await ensureBriefing(a);
+      let yours = null;
+      if (req.planLimits && req.planLimits.demandForecast) {
+        yours = await forecastFor(req.user.userId, a).then(yourWeekItem).catch(() => null);
+      }
+      res.json({
+        success: true,
+        area: publicArea(a),
+        week,
+        status: row ? row.status : "preparing",
+        briefing: row && row.status === "ready" ? row.data : null,
+        yourWeek: yours,
+      });
+    } catch (err) {
+      console.error("Market briefing error:", err.message);
+      res.status(500).json({ success: false, message: "Couldn't load this week's briefing." });
+    }
+  });
+
+  // Monday job: prepare this week's briefing for every area that has a store on
+  // a plan with briefings, one at a time (so a busy Monday never floods the AI)
+  router.runWeeklyBriefings = async function runWeeklyBriefings({ pauseMs = 2000 } = {}) {
+    await ready;
+    const plans = Object.keys(PLANS).filter((p) => PLANS[p].weeklyBriefing);
+    const areas = (
+      await pool.query(
+        `SELECT DISTINCT ON (mp.zip, mp.category) mp.zip, mp.city, mp.state, mp.lat, mp.lon, mp.timezone, mp.category
+           FROM market_profiles mp JOIN users u ON u.id = mp.user_id
+          WHERE mp.zip IS NOT NULL AND COALESCE(u.plan, 'free') = ANY($1::text[])`,
+        [plans]
+      )
+    ).rows;
+    const stats = { areas: areas.length, ready: 0, failed: 0 };
+    if (!anthropic) return stats;
+    for (const a of areas) {
+      const { row } = await ensureBriefing(a, { wait: true });
+      if (row && row.status === "ready") stats.ready++;
+      else stats.failed++;
+      if (pauseMs) await new Promise((r) => setTimeout(r, pauseMs));
+    }
+    console.log("Weekly market briefings done", stats);
+    return stats;
+  };
 
   return router;
 };

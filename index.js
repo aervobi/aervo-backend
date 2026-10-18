@@ -309,8 +309,9 @@ app.use("/", marginRoutes);
 const digestRoutes = require("./routes/intelligence/digest")(pool, authenticateToken);
 app.use("/", digestRoutes);
 
-// Intelligence Center: Local Market (area facts, 7-day demand forecast)
-app.use("/", require("./routes/market")(pool, authenticateToken));
+// Intelligence Center: Local Market (area facts, 7-day demand forecast, weekly briefing)
+const marketRoutes = require("./routes/market")(pool, authenticateToken);
+app.use("/", marketRoutes);
 
 // Intelligence Center AI (insights + advisor chat). aiLimiter: these cost money per call.
 app.use(["/api/intelligence/insights", "/api/intelligence/chat"], aiLimiter);
@@ -344,6 +345,14 @@ const { runSquareMaintenance } = require("./integrations/square/sync/maintenance
 cron.schedule(
   "30 3 * * *",
   () => runSquareMaintenance().catch((err) => console.error("Square maintenance job failed:", err.message)),
+  { timezone: "UTC" }
+);
+
+// Weekly Local Market briefings: prepared Monday morning for every area with a
+// store on a plan that includes them (stores that look earlier get theirs on demand)
+cron.schedule(
+  "0 12 * * 1",
+  () => marketRoutes.runWeeklyBriefings().catch((err) => console.error("Weekly briefing job failed:", err.message)),
   { timezone: "UTC" }
 );
 

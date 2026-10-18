@@ -13,6 +13,7 @@ const PLANS = {
     unifiedView: false, // one customer view across Shopify + Square
     marketSnapshot: false, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
+    weeklyBriefing: false, // Local Market: "This week in <city>" AI briefing
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -32,6 +33,7 @@ const PLANS = {
     unifiedView: false, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
+    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -51,6 +53,7 @@ const PLANS = {
     unifiedView: true, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
+    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,
@@ -70,6 +73,7 @@ const PLANS = {
     unifiedView: true, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
+    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,
