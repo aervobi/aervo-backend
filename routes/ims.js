@@ -1,4 +1,5 @@
 const express = require('express');
+const { planFor, clampFrom } = require('../utils/planAccess');
 
 module.exports = function(pool, authenticateToken) {
   const router = express.Router();
@@ -212,8 +213,10 @@ module.exports = function(pool, authenticateToken) {
   // ─── SALES ───────────────────────────────────────────────
 
   router.get('/sales', async (req, res) => {
-    const { merchant_id, from, to } = req.query;
+    const { merchant_id, to } = req.query;
     try {
+      // never earlier than the plan's data history
+      const from = clampFrom(req.query.from, (await planFor(pool, req.user.userId)).limits);
       const result = await pool.query(
         `SELECT s.*,
           c.first_name, c.last_name,
@@ -384,8 +387,9 @@ module.exports = function(pool, authenticateToken) {
   // ─── ANALYTICS (feeds the unified dashboard) ─────────────
 
   router.get('/analytics/summary', async (req, res) => {
-    const { merchant_id, from, to } = req.query;
+    const { merchant_id, to } = req.query;
     try {
+      const from = clampFrom(req.query.from, (await planFor(pool, req.user.userId)).limits);
       const revenue = await pool.query(
         `SELECT COALESCE(SUM(total_amount), 0) AS total_revenue,
                 COALESCE(SUM(total_cost), 0) AS total_cogs,

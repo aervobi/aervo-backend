@@ -31,8 +31,10 @@ async function applyStripeEvent(event) {
         return;
       }
       await pool.query(
-        `UPDATE users SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4`,
-        [planId.split('_')[0], obj.customer, obj.subscription, userId]
+        `UPDATE users SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3,
+                pro_trial_used_at = CASE WHEN $5 THEN COALESCE(pro_trial_used_at, NOW()) ELSE pro_trial_used_at END
+          WHERE id = $4`,
+        [planId.split('_')[0], obj.customer, obj.subscription, userId, obj.metadata.trial === '1']
       );
       console.log('Stripe: plan activated', { userId, plan: planId.split('_')[0] });
       return;
@@ -73,7 +75,8 @@ module.exports = function stripeRoutes(authenticateToken) {
     .query(
       `ALTER TABLE users
          ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT,
-         ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`
+         ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT,
+         ADD COLUMN IF NOT EXISTS pro_trial_used_at TIMESTAMPTZ`
     )
     .catch((err) => console.error('Stripe columns:', err.message));
 
@@ -112,17 +115,36 @@ module.exports = function stripeRoutes(authenticateToken) {
 
     try {
       const userId = String(req.user.userId);
-      const user = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.userId]);
+      const user = await pool.query(
+        'SELECT email, pro_trial_used_at, stripe_subscription_id FROM users WHERE id = $1',
+        [req.user.userId]
+      );
       if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      // Pro comes with a 14-day free trial (no card needed), once per account.
+      // Without a card at the end of the trial the subscription cancels and the
+      // account drops back to Starter (customer.subscription.deleted).
+      const u = user.rows[0];
+      const trial = planId.startsWith('pro_') && !u.pro_trial_used_at && !u.stripe_subscription_id;
 
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
         mode: 'subscription',
-        customer_email: user.rows[0].email,
+        customer_email: u.email,
         line_items: [{ price: PLANS[planId], quantity: 1 }],
         success_url: 'https://aervoapp.com/dashboard?upgraded=true',
         cancel_url: 'https://aervoapp.com/pricing',
-        metadata: { userId, planId },
+        metadata: { userId, planId, trial: trial ? '1' : '0' },
+        ...(trial
+          ? {
+              payment_method_collection: 'if_required',
+              subscription_data: {
+                trial_period_days: 14,
+                trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+                metadata: { userId, planId },
+              },
+            }
+          : {}),
       });
       res.json({ url: session.url });
     } catch (err) {

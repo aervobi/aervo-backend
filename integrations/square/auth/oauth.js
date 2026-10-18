@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const { pool } = require('../../../db');
+const { checkSourceLimit } = require('../../../utils/planAccess');
 const { saveTokens, getTokensByMerchant } = require('./tokenStore');
 const { startInitialSync } = require('../sync/initialSync');
 
@@ -97,6 +98,8 @@ async function handleConnectRequest(req, res) {
   }
   try {
     const merchantId = String(req.user.userId);
+    const blocked = await checkSourceLimit(pool, req.user.userId, 'square');
+    if (blocked) return res.status(403).json(blocked);
     const state = crypto.randomBytes(32).toString('hex');
     await ensureStateTable();
     await pool.query(`DELETE FROM square_oauth_states WHERE expires_at < NOW()`);

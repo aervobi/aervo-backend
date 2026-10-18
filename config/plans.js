@@ -1,3 +1,6 @@
+// What each plan includes. The server enforces these through utils/planAccess.js;
+// the pricing page (pricing/index.html) must say the same thing.
+// Infinity = unlimited. Plan keys: free (shown as "Starter"), essential, pro, business.
 const PLANS = {
   free: {
     name: "Starter",
@@ -7,6 +10,9 @@ const PLANS = {
     fullDashboard: false,
     googleReviews: false,
     customerSegmentation: false,
+    unifiedView: false, // one customer view across Shopify + Square
+    marketSnapshot: false, // Local Market: area facts (Census) + local angle
+    demandForecast: false, // Local Market: 7-day expected traffic
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -23,6 +29,9 @@ const PLANS = {
     fullDashboard: true,
     googleReviews: 50,
     customerSegmentation: true,
+    unifiedView: false, // one customer view across Shopify + Square
+    marketSnapshot: true, // Local Market: area facts (Census) + local angle
+    demandForecast: false, // Local Market: 7-day expected traffic
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -39,6 +48,9 @@ const PLANS = {
     fullDashboard: true,
     googleReviews: Infinity,
     customerSegmentation: true,
+    unifiedView: true, // one customer view across Shopify + Square
+    marketSnapshot: true, // Local Market: area facts (Census) + local angle
+    demandForecast: true, // Local Market: 7-day expected traffic
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,
@@ -55,6 +67,9 @@ const PLANS = {
     fullDashboard: true,
     googleReviews: Infinity,
     customerSegmentation: true,
+    unifiedView: true, // one customer view across Shopify + Square
+    marketSnapshot: true, // Local Market: area facts (Census) + local angle
+    demandForecast: true, // Local Market: 7-day expected traffic
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,

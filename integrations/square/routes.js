@@ -6,6 +6,13 @@ const { handleConnectRequest, handleOAuthCallback, revokeAccessToken } = require
 const { handleWebhookEvent } = require('./webhooks/webhookHandler');
 const { deleteTokens, getTokensByMerchant } = require('./auth/tokenStore');
 const { pool } = require('../../db');
+const { planFor, historyStart } = require('../../utils/planAccess');
+
+// Oldest date this account's plan may see (null = unlimited)
+async function planWindow(req) {
+  const { plan, limits } = await planFor(pool, req.user.userId);
+  return { plan, limits, since: historyStart(limits) };
+}
 
 // Square data is keyed by aervo_merchant_id, which is the Aervo user id. It is
 // always taken from the verified login token, never from the URL or body; a
@@ -99,10 +106,19 @@ router.get('/orders', authenticateToken, async (req, res) => {
     else if (filter === '7days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '7 days'`;
     else if (filter === '30days') dateFilter = `AND o.created_at >= NOW() - INTERVAL '30 days'`;
 
-    let serviceFilter = '';
-    if (service) serviceFilter = `AND EXISTS (SELECT 1 FROM square_order_line_items li2 WHERE li2.square_order_id = o.square_order_id AND li2.name ILIKE $2)`;
+    const params = [merchantId];
+    // The plan's data history always applies, whatever filter was asked for
+    const { since } = await planWindow(req);
+    if (since) {
+      params.push(since);
+      dateFilter += ` AND o.created_at >= $${params.length}`;
+    }
 
-    const params = service ? [merchantId, `%${service}%`] : [merchantId];
+    let serviceFilter = '';
+    if (service) {
+      params.push(`%${service}%`);
+      serviceFilter = `AND EXISTS (SELECT 1 FROM square_order_line_items li2 WHERE li2.square_order_id = o.square_order_id AND li2.name ILIKE $${params.length})`;
+    }
 
     const result = await pool.query(`
       SELECT 
@@ -136,7 +152,13 @@ router.get('/appointments', authenticateToken, async (req, res) => {
   if (rejectForeignId(req, res, req.query.merchantId)) return;
   const merchantId = ownMerchantId(req);
   try {
-    const result = await pool.query(`SELECT * FROM square_appointments WHERE aervo_merchant_id = $1 ORDER BY start_at DESC LIMIT 200`, [merchantId]);
+    const { since } = await planWindow(req);
+    const result = await pool.query(
+      `SELECT * FROM square_appointments
+        WHERE aervo_merchant_id = $1 AND ($2::timestamptz IS NULL OR start_at >= $2)
+        ORDER BY start_at DESC LIMIT 200`,
+      [merchantId, since]
+    );
     res.json({ success: true, appointments: result.rows });
   } catch (err) { console.error('Square route error', err.message); res.status(500).json({ success: false, message: 'Something went wrong' }); }
 });
@@ -147,18 +169,20 @@ router.get('/top-items', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT 
-        name,
-        SUM(quantity) as total_quantity,
-        SUM(gross_amount) as total_revenue,
-        COUNT(DISTINCT square_order_id) as total_orders
-       FROM square_order_line_items
-       WHERE aervo_merchant_id = $1
-         AND name IS NOT NULL
-         AND name != ''
-       GROUP BY name
+        li.name,
+        SUM(li.quantity) as total_quantity,
+        SUM(li.gross_amount) as total_revenue,
+        COUNT(DISTINCT li.square_order_id) as total_orders
+       FROM square_order_line_items li
+       JOIN square_orders o ON o.square_order_id = li.square_order_id
+       WHERE li.aervo_merchant_id = $1
+         AND li.name IS NOT NULL
+         AND li.name != ''
+         AND ($2::timestamptz IS NULL OR o.created_at >= $2)
+       GROUP BY li.name
        ORDER BY total_orders DESC
        LIMIT 10`,
-      [merchantId]
+      [merchantId, (await planWindow(req)).since]
     );
 
     const items = result.rows.map(r => ({
@@ -180,9 +204,13 @@ router.get('/customers/enriched', authenticateToken, async (req, res) => {
   if (rejectForeignId(req, res, req.query.merchantId)) return;
   const merchantId = ownMerchantId(req);
   try {
+    const { limits, since } = await planWindow(req);
+    const params = [merchantId, since];
     let searchFilter = '';
-    if (search) searchFilter = `AND (c.given_name ILIKE $2 OR c.family_name ILIKE $2 OR c.email_address ILIKE $2)`;
-    const params = search ? [merchantId, `%${search}%`] : [merchantId];
+    if (search) {
+      params.push(`%${search}%`);
+      searchFilter = `AND (c.given_name ILIKE $3 OR c.family_name ILIKE $3 OR c.email_address ILIKE $3)`;
+    }
 
     const result = await pool.query(`
       SELECT 
@@ -201,6 +229,7 @@ router.get('/customers/enriched', authenticateToken, async (req, res) => {
       FROM square_customers c
       LEFT JOIN square_orders o ON o.square_customer_id = c.square_customer_id 
         AND o.aervo_merchant_id = c.aervo_merchant_id
+        AND ($2::timestamptz IS NULL OR o.created_at >= $2)
       LEFT JOIN square_order_line_items li ON li.square_order_id = o.square_order_id
       WHERE c.aervo_merchant_id = $1 ${searchFilter}
       GROUP BY c.id
@@ -217,7 +246,12 @@ router.get('/customers/enriched', authenticateToken, async (req, res) => {
     });
     const customers = Array.from(seen.values());
 
-    // Filter by segment if requested
+    // Segments (loyal / at risk / new...) are a paid feature: Starter gets the
+    // plain customer list
+    if (!limits.customerSegmentation) {
+      customers.forEach((c) => { c.computed_segment = null; });
+      return res.json({ success: true, customers, segmentsLocked: true });
+    }
     const filtered = segment ? customers.filter(c => c.computed_segment === segment) : customers;
 
     res.json({ success: true, customers: filtered });

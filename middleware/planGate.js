@@ -1,45 +1,10 @@
-const PLANS = require('../config/plans');
+// Route gate: requirePlan("googleReviews") lets the request through only when
+// the caller's plan includes that feature (config/plans.js). Fails CLOSED: if
+// the plan can't be read, the request is refused rather than unlocked.
+const { requireFeature } = require("../utils/planAccess");
 
 function requirePlan(feature) {
-  return async (req, res, next) => {
-    try {
-      const userId = req.user.userId;
-      const pool = req.app.locals.pool;
-      
-      const result = await pool.query(
-        'SELECT plan FROM users WHERE id = $1',
-        [userId]
-      );
-      
-      const plan = result.rows[0]?.plan || 'free';
-      const limits = PLANS[plan];
-      
-      if (!limits[feature]) {
-        return res.status(403).json({
-          success: false,
-          code: 'PLAN_LIMIT',
-          message: `This feature requires a higher plan.`,
-          requiredPlan: getRequiredPlan(feature),
-          currentPlan: plan,
-        });
-      }
-      
-      req.planLimits = limits;
-      req.userPlan = plan;
-      next();
-    } catch (err) {
-      console.error('Plan gate error:', err);
-      next();
-    }
-  };
-}
-
-function getRequiredPlan(feature) {
-  const PLANS = require('../config/plans');
-  for (const [plan, limits] of Object.entries(PLANS)) {
-    if (limits[feature]) return plan;
-  }
-  return 'pro';
+  return (req, res, next) => requireFeature(req.app.locals.pool, feature)(req, res, next);
 }
 
 module.exports = { requirePlan };

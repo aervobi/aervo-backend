@@ -31,6 +31,8 @@ const { signSession, setSessionCookie, clearSessionCookie, revokeSessions } = re
 const { isValidTimeZone } = require("../utils/tzdate");
 const { teamSummaryFor } = require("./team");
 const { isFounder } = require("./founder");
+const PLANS = require("../config/plans");
+const { aiUsage } = require("../utils/planAccess");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -83,6 +85,8 @@ module.exports = (pool, authenticateToken) => {
       }
 
       const team = await teamSummaryFor(pool, req.user.userId);
+      const planKey = PLANS[user.plan] ? user.plan : "free";
+      const ai = await aiUsage(pool, req.user.userId).catch(() => null);
 
       return res.json({
   success: true,
@@ -108,6 +112,13 @@ module.exports = (pool, authenticateToken) => {
     squareMerchantId: user.square_merchant_id,
   },
   team, // { id, name, role } or null
+  // What the plan includes, for showing locked/upgrade states. The server
+  // enforces these itself; this is only so pages can explain them.
+  // (null = unlimited)
+  planFeatures: Object.fromEntries(
+    Object.entries(PLANS[planKey]).map(([k, v]) => [k, v === Infinity ? null : v])
+  ),
+  aiUsage: ai && ai.limit != null ? { limit: ai.limit, used: ai.used, remaining: ai.remaining } : null,
 
   shop: activeStore ? {
     shopOrigin:  activeStore.store_origin,

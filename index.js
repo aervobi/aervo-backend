@@ -269,7 +269,9 @@ app.use("/", require("./routes/founder")(pool, authenticateToken));
 app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }));
 
 const unifiedRoutes = require("./routes/unified");
-app.use("/api/unified", unifiedRoutes);
+const { requireFeature, aiQuota, planFor, historyStart } = require("./utils/planAccess");
+// One customer view across Shopify + Square: Pro and Business
+app.use("/api/unified", authenticateToken, requireFeature(pool, "unifiedView"), unifiedRoutes);
 
 // Reports routes
 const reportsRoutes = require("./routes/reports")(pool, authenticateToken);
@@ -307,8 +309,13 @@ app.use("/", marginRoutes);
 const digestRoutes = require("./routes/intelligence/digest")(pool, authenticateToken);
 app.use("/", digestRoutes);
 
+// Intelligence Center: Local Market (area facts, 7-day demand forecast)
+app.use("/", require("./routes/market")(pool, authenticateToken));
+
 // Intelligence Center AI (insights + advisor chat). aiLimiter: these cost money per call.
 app.use(["/api/intelligence/insights", "/api/intelligence/chat"], aiLimiter);
+// Ask Aervo allowance per plan (Starter: 3 a month). Every chat endpoint counts.
+app.use(["/api/ai/chat", "/api/intelligence/chat"], authenticateToken, aiQuota(pool));
 app.use("/", require("./routes/intelligence/ai")(pool, authenticateToken));
 
 // Nightly QuickBooks sync — runs in-process on a schedule rather than
@@ -645,9 +652,12 @@ app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
     const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
 
+    // Last 30 days, or less if the plan's data history is shorter
+    const { limits } = await planFor(pool, req.user.userId);
+    const overviewDays = Math.min(30, limits.dataHistoryDays || 30);
     const [ordersResp, productsResp, customersResp] = await Promise.all([
       fetch(
-        `${baseUrl}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(30)}`,
+        `${baseUrl}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(overviewDays)}`,
         { headers: { "X-Shopify-Access-Token": accessToken } }
       ),
       fetch(`${baseUrl}/products.json?limit=250`, {
@@ -719,15 +729,18 @@ app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
 app.get("/api/shopify/orders", authenticateToken, async (req, res) => {
   try {
     const shop = req.query.shop;
-    const limit = req.query.limit || 50;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 250);
     if (!shop)
       return res.status(400).json({ success: false, message: "Shop parameter required" });
 
     const accessToken = await getShopToken(shop, req.user.userId);
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
 
+    // Only as far back as the plan's data history
+    const since = historyStart((await planFor(pool, req.user.userId)).limits);
     const response = await fetch(
-      `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=${limit}&order=created_at+DESC`,
+      `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=${limit}&order=created_at+DESC` +
+        (since ? `&created_at_min=${since.toISOString()}` : ""),
       { headers: { "X-Shopify-Access-Token": accessToken } }
     );
 

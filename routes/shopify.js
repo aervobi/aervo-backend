@@ -11,6 +11,7 @@ const {
   startChallenge,
 } = require("../middleware/auth");
 const { requiresSecondFactor } = require("./twoFactor");
+const { checkSourceLimit } = require("../utils/planAccess");
 
 module.exports = function (pool, opts = {}) {
   const router = express.Router();
@@ -251,6 +252,9 @@ module.exports = function (pool, opts = {}) {
       if (!SHOP_RE.test(shop)) {
         return res.status(400).json({ success: false, message: "Enter a valid .myshopify.com store domain." });
       }
+      // Plan limits: number of sales sources and of Shopify stores
+      const blocked = await checkSourceLimit(pool, req.user.userId, "shopify", { shop });
+      if (blocked) return res.status(403).json(blocked);
       const state = crypto.randomBytes(16).toString("hex");
       await pool.query(
         `INSERT INTO shopify_oauth_states (shop_origin, state, created_at, source, user_id)
