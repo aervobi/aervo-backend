@@ -6,6 +6,8 @@
 //   GET  /api/market/forecast   7-day expected traffic: weather + paydays + holidays + own sales [demandForecast]
 //   GET  /api/market/briefing   "This week in <city>": AI briefing with web search + sources   [weeklyBriefing]
 //                               (+ a "your week" item from the store's own forecast on Pro)
+//   GET  /api/market/competitors  nearby competitors + what their customers say (Google Places) [competitorRadar]
+//   GET  /api/market/trending     fastest-growing and new places nearby (weekly review-count snapshots) [trendingNearby]
 //
 // Area: the owner's choice, else their Square location's ZIP, else the free-text
 // location from their profile. ZIPs are looked up on zippopotam.us and city names
@@ -22,6 +24,7 @@ const { requireFeature, effectivePlan } = require("../utils/planAccess");
 const { buildForecast } = require("../utils/demandForecast");
 const { generateBriefing } = require("../utils/marketBriefing");
 const { withAiContext } = require("../utils/aiSpend");
+const { nearby, competitorTypes, reviewThemes, PlacesError, TRENDING_TYPES } = require("../utils/localCompetition");
 const { CHAT_MODEL, replyText } = require("../utils/aiModels");
 
 const CATEGORIES = {
@@ -58,6 +61,7 @@ async function getJson(url, { timeout = 12000 } = {}) {
 module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
   const router = express.Router();
   const fetchJson = deps.fetchJson || getJson; // tests pass a fake
+  const placesFetch = deps.placesFetch || ((...a) => fetch(...a)); // Google Places (POST), tests pass a fake
   let anthropic = deps.anthropic;
   if (anthropic === undefined) {
     anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
@@ -87,6 +91,19 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
       error      TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    // Weekly review counts per Google place (shared by every store): "Trending near you"
+    await pool.query(`CREATE TABLE IF NOT EXISTS place_snapshots (
+      place_id     TEXT NOT NULL,
+      day          DATE NOT NULL,
+      name         TEXT,
+      rating       NUMERIC(2, 1),
+      rating_count INTEGER,
+      PRIMARY KEY (place_id, day)
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS place_scan_areas (
+      area_key   TEXT PRIMARY KEY,           -- rounded lat,lon of a Trending scan
+      first_scan DATE NOT NULL DEFAULT CURRENT_DATE
     )`);
     // Briefings were keyed by ZIP at first; now by city
     await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS city TEXT`);
@@ -574,7 +591,8 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     const worst = days.reduce((x, y) => (y.pct < x.pct ? y : x));
     const fmtDay = (d) => new Date(d.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
     let body = `${fmtDay(best)} looks like your busiest day (${best.pct >= 0 ? "+" : ""}${best.pct}% vs an average day)`;
-    const why = best.reasons.filter((r) => r.kind !== "weekday").map((r) => r.text.toLowerCase());
+    // Only what actually lifts the day (a rain dip isn't "helping")
+    const why = best.reasons.filter((r) => r.kind !== "weekday" && r.effect != null && r.effect > 0).map((r) => r.text.toLowerCase());
     if (why.length) body += `, helped by ${why.join(" and ")}`;
     body += ".";
     if (worst !== best && worst.pct <= -8) body += ` ${fmtDay(worst)} looks slowest (${worst.pct}%).`;
@@ -611,6 +629,206 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     } catch (err) {
       console.error("Market briefing error:", err.message);
       res.status(500).json({ success: false, message: "Couldn't load this week's briefing." });
+    }
+  });
+
+  // ── competitors + trending (Google Places) ──────────────────────────────────
+  const WEEK = 7 * DAYS;
+  const RADAR_MILES = 2;
+  const TREND_MILES = 3;
+  const placesUnavailable = (a) => ({
+    success: true,
+    area: publicArea(a),
+    unavailable: "Nearby business data is being set up. Check back soon.",
+  });
+
+  // The store's exact spot when its Google listing is linked (Google Reviews),
+  // else the middle of its ZIP code
+  async function storeCenter(userId, a) {
+    let link = null;
+    try {
+      link = (await pool.query(`SELECT place_id FROM google_review_connections WHERE user_id = $1`, [userId])).rows[0];
+    } catch (err) {
+      if (err.code !== "42P01") throw err;
+    }
+    if (link && process.env.GOOGLE_MAPS_API_KEY) {
+      try {
+        const own = await cached(`ownplace:${link.place_id}`, WEEK, async () => {
+          const r = await placesFetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(link.place_id)}`, {
+            headers: { "X-Goog-Api-Key": process.env.GOOGLE_MAPS_API_KEY, "X-Goog-FieldMask": "id,location,rating,userRatingCount" },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!r.ok) throw new Error(`Place details ${r.status}`);
+          const d = await r.json();
+          return { placeId: d.id, lat: d.location.latitude, lon: d.location.longitude, rating: d.rating ?? null, reviews: d.userRatingCount ?? 0 };
+        });
+        return { lat: own.lat, lon: own.lon, exact: true, own };
+      } catch (err) {
+        console.warn("Market: own place lookup failed:", err.message);
+      }
+    }
+    return { lat: a.lat, lon: a.lon, exact: false, own: null };
+  }
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+
+  router.get("/api/market/competitors", authenticateToken, requireFeature(pool, "competitorRadar"), async (req, res) => {
+    try {
+      const a = await areaFor(req.user.userId);
+      if (!a) return res.json({ success: true, needsSetup: true });
+      const types = competitorTypes(a.category);
+      if (!types) {
+        return res.json({
+          success: true,
+          area: publicArea(a),
+          unavailable: "Choose your business type (coffee shop, restaurant, salon, fitness or retail) above to see competitors.",
+        });
+      }
+      if (!process.env.GOOGLE_MAPS_API_KEY) return res.json(placesUnavailable(a));
+      const center = await storeCenter(req.user.userId, a);
+      const ownId = center.own && center.own.placeId;
+
+      const data = await cached(`radar:${r3(center.lat)},${r3(center.lon)}:${a.category}`, WEEK, async () => {
+        const found = await nearby({
+          key: process.env.GOOGLE_MAPS_API_KEY,
+          fetchImpl: placesFetch,
+          center,
+          radiusMeters: Math.round(RADAR_MILES * 1609.34),
+          types,
+          rank: "DISTANCE",
+          withReviews: true,
+        });
+        const competitors = found.filter((c) => c.placeId !== ownId).slice(0, 8);
+        // What customers say: one AI read per area per week, shared by stores here
+        const themes = await withAiContext({ userId: 0, feature: "market/competitors" }, () =>
+          reviewThemes({ anthropic, categoryLabel: CATEGORIES[a.category], city: a.city, competitors, own: center.own })
+        ).catch((err) => {
+          console.warn("Market: competitor themes failed:", err.message);
+          return null;
+        });
+        return {
+          scannedAt: new Date().toISOString(),
+          edge: themes ? themes.edge : null,
+          competitors: competitors.map(({ reviewText, ...c }) => ({
+            ...c,
+            praised: (themes && themes.byPlace[c.placeId] && themes.byPlace[c.placeId].praised) || [],
+            complaints: (themes && themes.byPlace[c.placeId] && themes.byPlace[c.placeId].complaints) || [],
+          })),
+        };
+      });
+      res.json({
+        success: true,
+        area: publicArea(a),
+        radiusMiles: RADAR_MILES,
+        exactLocation: center.exact,
+        own: center.own ? { rating: center.own.rating, reviews: center.own.reviews } : null,
+        ...data,
+        source: "Google Maps",
+      });
+    } catch (err) {
+      if (err instanceof PlacesError) {
+        console.error("Market competitors: Google Places failed:", err.message, err.reason || "");
+        const a = await areaFor(req.user.userId).catch(() => null);
+        return res.json(placesUnavailable(a));
+      }
+      console.error("Market competitors error:", err.message);
+      res.status(500).json({ success: false, message: "Couldn't load nearby competitors." });
+    }
+  });
+
+  router.get("/api/market/trending", authenticateToken, requireFeature(pool, "trendingNearby"), async (req, res) => {
+    try {
+      const a = await areaFor(req.user.userId);
+      if (!a) return res.json({ success: true, needsSetup: true });
+      if (!process.env.GOOGLE_MAPS_API_KEY) return res.json(placesUnavailable(a));
+      const center = await storeCenter(req.user.userId, a);
+      const areaKey = `${Math.round(center.lat * 100) / 100},${Math.round(center.lon * 100) / 100}`;
+
+      // Scan at most once a week per area; each scan records every place's review count
+      const scan = await cached(`trend:${areaKey}`, WEEK, async () => {
+        const found = await nearby({
+          key: process.env.GOOGLE_MAPS_API_KEY,
+          fetchImpl: placesFetch,
+          center,
+          radiusMeters: Math.round(TREND_MILES * 1609.34),
+          types: TRENDING_TYPES,
+          rank: "POPULARITY",
+        });
+        for (const p of found) {
+          await pool.query(
+            `INSERT INTO place_snapshots (place_id, day, name, rating, rating_count) VALUES ($1, CURRENT_DATE, $2, $3, $4)
+             ON CONFLICT (place_id, day) DO UPDATE SET rating = EXCLUDED.rating, rating_count = EXCLUDED.rating_count`,
+            [p.placeId, p.name, p.rating, p.reviews]
+          );
+        }
+        return { scannedAt: new Date().toISOString(), places: found.map(({ reviewText, hours, ...p }) => p) };
+      });
+      await pool.query(`INSERT INTO place_scan_areas (area_key) VALUES ($1) ON CONFLICT (area_key) DO NOTHING`, [areaKey]);
+      const firstScan = (await pool.query(`SELECT first_scan FROM place_scan_areas WHERE area_key = $1`, [areaKey])).rows[0].first_scan;
+      const trackingDays = Math.floor((Date.now() - new Date(firstScan).getTime()) / DAYS);
+
+      // Growth = review count now vs the oldest snapshot from 1-8 weeks ago
+      const ids = scan.places.map((p) => p.placeId);
+      const hist = ids.length
+        ? (
+            await pool.query(
+              `SELECT place_id,
+                      (array_agg(rating_count ORDER BY day ASC))[1] AS then_count,
+                      MIN(day) AS first_day
+                 FROM place_snapshots
+                WHERE place_id = ANY($1::text[]) AND day >= CURRENT_DATE - 60 AND day <= CURRENT_DATE - 6
+                GROUP BY place_id`,
+              [ids]
+            )
+          ).rows
+        : [];
+      const firstSeen = ids.length
+        ? (await pool.query(`SELECT place_id, MIN(day) AS d FROM place_snapshots WHERE place_id = ANY($1::text[]) GROUP BY place_id`, [ids])).rows
+        : [];
+      const thenBy = new Map(hist.map((h) => [h.place_id, h]));
+      const seenBy = new Map(firstSeen.map((f) => [f.place_id, new Date(f.d)]));
+      const mine = new Set(competitorTypes(a.category) || []);
+
+      const items = scan.places.map((p) => {
+        const then = thenBy.get(p.placeId);
+        const growth = then && then.then_count != null ? p.reviews - Number(then.then_count) : null;
+        const seen = seenBy.get(p.placeId);
+        // First spotted a week or more after we started watching this area, and
+        // still with few reviews (a long-open place can also just enter the top 20)
+        const isNew = !!(seen && trackingDays >= 7 && seen.getTime() - new Date(firstScan).getTime() >= 6 * DAYS && p.reviews < 100);
+        return { ...p, growth, isNew, sameCategory: mine.has(p.typeKey) };
+      });
+      const enoughHistory = trackingDays >= 7 && items.some((i) => i.growth != null);
+      let list;
+      if (enoughHistory) {
+        list = items
+          .filter((i) => i.isNew || (i.growth != null && i.growth > 0))
+          .sort((x, y) => (y.isNew - x.isNew) || (y.growth || 0) - (x.growth || 0))
+          .slice(0, 6);
+      } else {
+        // First week: most popular nearby, while growth history builds up
+        list = items
+          .filter((i) => i.rating != null)
+          .sort((x, y) => y.reviews * (y.rating || 0) - x.reviews * (x.rating || 0))
+          .slice(0, 6);
+      }
+      res.json({
+        success: true,
+        area: publicArea(a),
+        radiusMiles: TREND_MILES,
+        mode: enoughHistory ? "trending" : "popular",
+        trackingSince: new Date(firstScan).toISOString().slice(0, 10),
+        scannedAt: scan.scannedAt,
+        places: list.map(({ typeKey, ...p }) => p),
+        source: "Google Maps",
+      });
+    } catch (err) {
+      if (err instanceof PlacesError) {
+        console.error("Market trending: Google Places failed:", err.message, err.reason || "");
+        const a = await areaFor(req.user.userId).catch(() => null);
+        return res.json(placesUnavailable(a));
+      }
+      console.error("Market trending error:", err.message);
+      res.status(500).json({ success: false, message: "Couldn't load what's trending nearby." });
     }
   });
 

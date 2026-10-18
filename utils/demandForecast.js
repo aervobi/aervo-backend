@@ -165,7 +165,10 @@ function buildForecast({ history = [], historyWeather = {}, days = [], hours = [
       factor *= eff;
       reasons.push({
         kind: "rain",
-        text: `Rain likely (${d.precipProb != null ? d.precipProb + "% chance" : "forecast"})`,
+        text:
+          d.precipProb != null && d.precipProb >= RAIN_PROB
+            ? `Rain likely (${d.precipProb}% chance)`
+            : `Rain possible (${d.precipProb != null ? d.precipProb + "% chance" : "forecast"})`,
         effect: Math.round((eff - 1) * 100),
         basis: rain ? `your last ${rain.samples} rainy days` : "typical for local shops",
       });

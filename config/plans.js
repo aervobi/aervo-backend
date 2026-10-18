@@ -25,6 +25,8 @@ const PLANS = {
     marketSnapshot: false, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
     weeklyBriefing: false, // Local Market: "This week in <city>" AI briefing
+    competitorRadar: false, // Local Market: nearby competitors + review themes (Google Places)
+    trendingNearby: false, // Local Market: fastest-growing and new places nearby
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -47,6 +49,8 @@ const PLANS = {
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
     weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    competitorRadar: false, // Local Market: nearby competitors + review themes (Google Places)
+    trendingNearby: false, // Local Market: fastest-growing and new places nearby
     revenueForecast: false,
     winBackCampaigns: false,
     aiMarketingCopy: false,
@@ -69,6 +73,8 @@ const PLANS = {
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
     weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    competitorRadar: true, // Local Market: nearby competitors + review themes (Google Places)
+    trendingNearby: true, // Local Market: fastest-growing and new places nearby
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,
@@ -91,6 +97,8 @@ const PLANS = {
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
     weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    competitorRadar: true, // Local Market: nearby competitors + review themes (Google Places)
+    trendingNearby: true, // Local Market: fastest-growing and new places nearby
     revenueForecast: true,
     winBackCampaigns: true,
     aiMarketingCopy: true,
