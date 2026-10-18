@@ -4,6 +4,7 @@ const multer = require("multer");
 const { parse } = require("csv-parse/sync");
 const XLSX = require("xlsx");
 const Anthropic = require("@anthropic-ai/sdk");
+const { planFor } = require("../utils/planAccess");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -41,12 +42,8 @@ module.exports = (pool, authenticateToken) => {
       const used = parseInt(result.rows[0].count);
       
       // Check if pro user (you can expand this later with Stripe)
-      const userResult = await pool.query(
-        `SELECT plan FROM users WHERE id = $1`,
-        [req.user.userId]
-      );
-      const plan = userResult.rows[0]?.plan || "free";
-      const limit = plan === "pro" ? 10 : 1;
+      const { plan, limits } = await planFor(pool, req.user.userId);
+      const limit = limits.csvUploadsPerMonth || 1;
 
       return res.json({ success: true, used, limit, plan });
     } catch (err) {
@@ -106,12 +103,8 @@ module.exports = (pool, authenticateToken) => {
       );
 
       const used = parseInt(usageResult.rows[0].count);
-      const userResult = await pool.query(
-        `SELECT plan FROM users WHERE id = $1`,
-        [req.user.userId]
-      );
-      const plan = userResult.rows[0]?.plan || "free";
-      const limit = plan === "pro" ? 10 : 1;
+      const { plan, limits } = await planFor(pool, req.user.userId);
+      const limit = limits.csvUploadsPerMonth || 1;
 
       if (used >= limit) {
         return res.status(403).json({
@@ -423,9 +416,8 @@ router.post("/api/csv/upload", authenticateToken, upload.single("file"), async (
       [req.user.userId, startOfMonth.toISOString()]
     );
     const used = parseInt(usageResult.rows[0].count);
-    const userResult = await pool.query(`SELECT plan FROM users WHERE id = $1`, [req.user.userId]);
-    const plan = userResult.rows[0]?.plan || "free";
-    const limit = plan === "pro" ? 10 : 3; // CSV-only users get 3/month
+    const { plan, limits } = await planFor(pool, req.user.userId);
+    const limit = Math.max(limits.csvUploadsPerMonth || 1, 3); // CSV-only users get at least 3/month
 
     if (used >= limit) {
       return res.status(403).json({

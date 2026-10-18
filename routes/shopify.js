@@ -11,7 +11,7 @@ const {
   startChallenge,
 } = require("../middleware/auth");
 const { requiresSecondFactor } = require("./twoFactor");
-const { checkSourceLimit } = require("../utils/planAccess");
+const { checkSourceLimit, planFor } = require("../utils/planAccess");
 
 module.exports = function (pool, opts = {}) {
   const router = express.Router();
@@ -499,10 +499,13 @@ module.exports = function (pool, opts = {}) {
   // =========================
   // Billing API
   // =========================
+  // Monthly prices from October 2026. legacyPrices are what earlier merchants
+  // subscribed at; they keep them ("founding member" pricing) and are still
+  // recognised when their subscription is checked.
   const BILLING_PLANS = {
-    essential: { name: "Aervo Essential", price: "19.00", trialDays: 0 },
-    pro:       { name: "Aervo Pro",       price: "49.00", trialDays: 14 },
-    business:  { name: "Aervo Business",  price: "99.00", trialDays: 0 },
+    essential: { name: "Aervo Essential", price: "29.00", legacyPrices: ["19.00"] },
+    pro:       { name: "Aervo Pro",       price: "69.00", legacyPrices: ["49.00"] },
+    business:  { name: "Aervo Business",  price: "149.00", legacyPrices: ["99.00"] },
   };
   // Charges are created in Shopify "test" mode (merchants aren't billed) until
   // SHOPIFY_BILLING_TEST=false is set in the environment.
@@ -546,12 +549,15 @@ module.exports = function (pool, opts = {}) {
       if (owned.rows.length === 0 || !owned.rows[0].access_token) {
         return res.status(403).json({ success: false, message: "Shop not connected to this account" });
       }
+      // Choosing Pro during the in-app trial keeps the days that are left
+      const { trial } = await planFor(pool, req.user.userId);
+      const trialDays = planKey === "pro" && trial ? trial.daysLeft : 0;
 
       const data = await shopGraphql(
         shop,
         owned.rows[0].access_token,
-        `mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $lineItems: [AppSubscriptionLineItemInput!]!) {
-           appSubscriptionCreate(name: $name, returnUrl: $returnUrl, test: $test, lineItems: $lineItems) {
+        `mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $trialDays: Int, $lineItems: [AppSubscriptionLineItemInput!]!) {
+           appSubscriptionCreate(name: $name, returnUrl: $returnUrl, test: $test, trialDays: $trialDays, lineItems: $lineItems) {
              appSubscription { id status }
              confirmationUrl
              userErrors { field message }
@@ -561,6 +567,7 @@ module.exports = function (pool, opts = {}) {
           name: plan.name,
           returnUrl: `${APP_URL}/auth/shopify/billing/confirm?shop=${encodeURIComponent(shop)}`,
           test: BILLING_TEST,
+          trialDays,
           lineItems: [
             {
               plan: {
@@ -621,8 +628,10 @@ module.exports = function (pool, opts = {}) {
           (sub) =>
             sub.status === "ACTIVE" &&
             sub.name === plan.name &&
-            sub.lineItems.some(
-              (li) => Number(li.plan?.pricingDetails?.price?.amount) === Number(plan.price)
+            sub.lineItems.some((li) =>
+              [plan.price, ...(plan.legacyPrices || [])].some(
+                (p) => Number(li.plan?.pricingDetails?.price?.amount) === Number(p)
+              )
             )
         );
         if (match) planKey = key;

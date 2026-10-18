@@ -2,8 +2,12 @@ const express = require('express');
 const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { pool } = require('../db');
+const { trialFor, planFor } = require('../utils/planAccess');
 
-const PLANS = {
+// Prices customers subscribed to before the October 2026 repricing
+// ($19 / $49 / $99). Existing subscribers keep them ("founding member"
+// pricing): they're still recognised here, only new checkouts use the new ones.
+const LEGACY_PRICES = {
   essential_monthly: 'price_1T3VjkF2vcu0U1CfNPjrKtjj',
   essential_annual:  'price_1T3VkuF2vcu0U1Cfb6Zm94uK',
   pro_monthly:       'price_1T3VmhF2vcu0U1CfIkvMnIVy',
@@ -12,8 +16,26 @@ const PLANS = {
   business_annual:   'price_1T3VoLF2vcu0U1CfB3oeV05a',
 };
 
+// Current prices ($29 / $69 / $149 a month, two months free yearly), created in
+// the Stripe dashboard and set in Render, e.g. STRIPE_PRICE_PRO_MONTHLY=price_...
+// Until a variable is set, checkout falls back to the legacy price (and says so
+// in the logs), so a missing setting never breaks checkout.
+const PLANS = Object.fromEntries(
+  Object.keys(LEGACY_PRICES).map((planId) => [
+    planId,
+    process.env[`STRIPE_PRICE_${planId.toUpperCase()}`] || LEGACY_PRICES[planId],
+  ])
+);
+const missingPrices = Object.keys(LEGACY_PRICES).filter((id) => !process.env[`STRIPE_PRICE_${id.toUpperCase()}`]);
+if (missingPrices.length) {
+  console.warn(
+    `Stripe: new prices not configured for ${missingPrices.join(', ')}; checkout uses the old prices for these ` +
+      `(set ${missingPrices.map((id) => `STRIPE_PRICE_${id.toUpperCase()}`).join(', ')})`
+  );
+}
+
 const PRICE_TO_PLAN = Object.fromEntries(
-  Object.entries(PLANS).map(([planId, priceId]) => [priceId, planId.split('_')[0]])
+  [...Object.entries(LEGACY_PRICES), ...Object.entries(PLANS)].map(([planId, priceId]) => [priceId, planId.split('_')[0]])
 );
 
 // Stripe -> users.plan. Called only after the webhook signature is verified.
@@ -115,17 +137,17 @@ module.exports = function stripeRoutes(authenticateToken) {
 
     try {
       const userId = String(req.user.userId);
-      const user = await pool.query(
-        'SELECT email, pro_trial_used_at, stripe_subscription_id FROM users WHERE id = $1',
-        [req.user.userId]
-      );
+      const user = await pool.query('SELECT to_jsonb(u) AS u FROM users u WHERE id = $1', [req.user.userId]);
       if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
 
-      // Pro comes with a 14-day free trial (no card needed), once per account.
-      // Without a card at the end of the trial the subscription cancels and the
-      // account drops back to Starter (customer.subscription.deleted).
-      const u = user.rows[0];
-      const trial = planId.startsWith('pro_') && !u.pro_trial_used_at && !u.stripe_subscription_id;
+      // New accounts already have a 14-day Pro trial in the app (no card). If
+      // they choose Pro before it ends, Stripe carries on the days that are
+      // left, so they're never charged early and never get two trials. Without
+      // a card when it ends, the subscription cancels and they drop to Lite.
+      const u = user.rows[0].u;
+      const left = trialFor(u);
+      const trialDays = planId.startsWith('pro_') && left ? left.daysLeft : 0;
+      const trial = trialDays > 0;
 
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
@@ -139,7 +161,7 @@ module.exports = function stripeRoutes(authenticateToken) {
           ? {
               payment_method_collection: 'if_required',
               subscription_data: {
-                trial_period_days: 14,
+                trial_period_days: trialDays,
                 trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
                 metadata: { userId, planId },
               },
@@ -155,8 +177,8 @@ module.exports = function stripeRoutes(authenticateToken) {
 
   router.get('/plan', authenticateToken, async (req, res) => {
     try {
-      const result = await pool.query('SELECT plan FROM users WHERE id = $1', [req.user.userId]);
-      res.json({ plan: result.rows[0]?.plan || 'starter' });
+      const { plan, billedPlan, trial } = await planFor(pool, req.user.userId);
+      res.json({ plan, billingPlan: billedPlan, trial });
     } catch (err) {
       console.error('Stripe plan error:', err.message);
       res.status(500).json({ error: 'Could not load plan' });

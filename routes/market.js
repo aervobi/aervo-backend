@@ -18,10 +18,10 @@
 // called rarely.
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
-const { requireFeature } = require("../utils/planAccess");
+const { requireFeature, effectivePlan } = require("../utils/planAccess");
 const { buildForecast } = require("../utils/demandForecast");
 const { generateBriefing } = require("../utils/marketBriefing");
-const PLANS = require("../config/plans");
+const { withAiContext } = require("../utils/aiSpend");
 const { CHAT_MODEL, replyText } = require("../utils/aiModels");
 
 const CATEGORIES = {
@@ -76,9 +76,9 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
       source     TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
-    // One weekly briefing per ZIP + category, shared by every matching store
+    // One weekly briefing per city + category, shared by every matching store
     await pool.query(`CREATE TABLE IF NOT EXISTS market_briefings (
-      key        TEXT PRIMARY KEY,          -- zip:category:weekStart
+      key        TEXT PRIMARY KEY,          -- state:city:category:weekStart
       zip        TEXT NOT NULL,
       category   TEXT NOT NULL,
       week_start DATE NOT NULL,
@@ -88,6 +88,10 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
+    // Briefings were keyed by ZIP at first; now by city
+    await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS city TEXT`);
+    await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS state TEXT`);
+    await pool.query(`ALTER TABLE market_briefings ALTER COLUMN zip DROP NOT NULL`);
     await pool.query(`CREATE TABLE IF NOT EXISTS market_cache (
       key        TEXT PRIMARY KEY,
       data       JSONB NOT NULL,
@@ -341,7 +345,9 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
         console.warn("Market snapshot: Census lookup failed:", err.message);
         return res.json({ success: true, area: publicArea(a), unavailable: "Census data isn't available for this ZIP right now." });
       }
-      const angle = await cached(`angle:${a.zip}:${a.category}`, 30 * DAYS, async () => ({ text: await localAngle(a, stats) }));
+      const angle = await cached(`angle:${a.zip}:${a.category}`, 30 * DAYS, () =>
+        withAiContext({ userId: 0, feature: "market/local-angle" }, async () => ({ text: await localAngle(a, stats) }))
+      );
       res.json({
         success: true,
         area: publicArea(a),
@@ -506,13 +512,20 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
   }
 
-  const briefingKey = (a, week) => `${a.zip}:${a.category}:${week.start}`;
+  // Shared by city, not ZIP: every coffee shop in El Paso gets the same
+  // briefing, which keeps one AI research run per city + category per week
+  const cityKey = (a) => `${String(a.state || "").toUpperCase()}:${String(a.city || "").trim().toLowerCase()}`;
+  const briefingKey = (a, week) => `${cityKey(a)}:${a.category}:${week.start}`;
 
   async function runGeneration(key, a, week) {
+    // Shared by every store in the city: logged as shared, not as the visitor's spend
+    return withAiContext({ userId: 0, feature: "market/briefing" }, () => runGenerationNow(key, a, week));
+  }
+  async function runGenerationNow(key, a, week) {
     try {
       const data = await generateBriefing({
         anthropic,
-        area: { city: a.city, state: a.state, zip: a.zip, timezone: a.timezone },
+        area: { city: a.city, state: a.state, timezone: a.timezone },
         categoryLabel: CATEGORIES[a.category] || CATEGORIES.other,
         weekStart: week.start,
         weekEnd: week.end,
@@ -537,13 +550,13 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     const week = weekOf(a.timezone);
     const key = briefingKey(a, week);
     const claimed = await pool.query(
-      `INSERT INTO market_briefings (key, zip, category, week_start, status)
-       VALUES ($1, $2, $3, $4, 'preparing')
+      `INSERT INTO market_briefings (key, zip, category, week_start, status, city, state)
+       VALUES ($1, $2, $3, $4, 'preparing', $7, $8)
        ON CONFLICT (key) DO UPDATE SET status = 'preparing', error = NULL, updated_at = NOW()
          WHERE (market_briefings.status = 'preparing' AND market_briefings.updated_at < NOW() - ($5 || ' milliseconds')::interval)
             OR (market_briefings.status = 'failed' AND market_briefings.updated_at < NOW() - ($6 || ' milliseconds')::interval)
        RETURNING key`,
-      [key, a.zip, a.category, week.start, String(PREPARING_TIMEOUT_MS), String(FAILED_RETRY_MS)]
+      [key, a.zip || null, a.category, week.start, String(PREPARING_TIMEOUT_MS), String(FAILED_RETRY_MS), a.city, a.state]
     );
     if (claimed.rows.length) {
       const job = runGeneration(key, a, week);
@@ -579,7 +592,7 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     try {
       const a = await areaFor(req.user.userId);
       if (!a) return res.json({ success: true, needsSetup: true });
-      if (!a.zip) return res.json({ success: true, area: publicArea(a), unavailable: "Add your store's ZIP code to get a weekly briefing." });
+      if (!a.city || !a.state) return res.json({ success: true, area: publicArea(a), unavailable: "Add your store's ZIP code to get a weekly briefing." });
       if (!anthropic) return res.json({ success: true, area: publicArea(a), unavailable: "Weekly briefings are being set up. Check back soon." });
 
       const { week, row } = await ensureBriefing(a);
@@ -605,15 +618,23 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
   // a plan with briefings, one at a time (so a busy Monday never floods the AI)
   router.runWeeklyBriefings = async function runWeeklyBriefings({ pauseMs = 2000 } = {}) {
     await ready;
-    const plans = Object.keys(PLANS).filter((p) => PLANS[p].weeklyBriefing);
-    const areas = (
+    // Stores whose plan in effect (trials count) includes the briefing, one per city + category
+    const rows = (
       await pool.query(
-        `SELECT DISTINCT ON (mp.zip, mp.category) mp.zip, mp.city, mp.state, mp.lat, mp.lon, mp.timezone, mp.category
+        `SELECT mp.city, mp.state, mp.zip, mp.lat, mp.lon, mp.timezone, mp.category, to_jsonb(u) AS urow
            FROM market_profiles mp JOIN users u ON u.id = mp.user_id
-          WHERE mp.zip IS NOT NULL AND COALESCE(u.plan, 'free') = ANY($1::text[])`,
-        [plans]
+          WHERE mp.city IS NOT NULL AND mp.state IS NOT NULL`
       )
     ).rows;
+    const seen = new Set();
+    const areas = [];
+    for (const r of rows) {
+      if (!effectivePlan(r.urow).limits.weeklyBriefing) continue;
+      const k = `${cityKey(r)}:${r.category}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      areas.push(r);
+    }
     const stats = { areas: areas.length, ready: 0, failed: 0 };
     if (!anthropic) return stats;
     for (const a of areas) {

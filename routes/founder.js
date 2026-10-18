@@ -10,6 +10,14 @@
 //  - A later Stripe or Shopify billing event for the account still wins, as usual.
 const express = require("express");
 const PLANS = require("../config/plans");
+const { TRIAL_DAYS, effectivePlan } = require("../utils/planAccess");
+
+// An account on its free trial (see utils/planAccess.js trialFor), in SQL
+const TRIAL_SQL = `(COALESCE(u.plan, 'free') = 'free'
+  AND u.created_at > NOW() - interval '${TRIAL_DAYS} days'
+  AND COALESCE(u.role, '') <> 'Team member'
+  AND (to_jsonb(u)->>'stripe_subscription_id') IS NULL
+  AND (to_jsonb(u)->>'pro_trial_used_at') IS NULL)`;
 
 const DEFAULT_FOUNDERS = "omardavila20@gmail.com";
 
@@ -77,7 +85,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
   // ── GET /api/founder/overview ── business-wide numbers
   router.get("/api/founder/overview", authenticateToken, requireFounder, async (req, res) => {
     try {
-      const [totals, plans, platforms, signups, shopify, square, squareErrors, quickbooks, reviews, teams, twofa] = await Promise.all([
+      const [totals, plans, platforms, signups, shopify, square, squareErrors, quickbooks, reviews, teams, twofa, aiMonth, aiByFeature, aiTop] = await Promise.all([
         safe(
           `SELECT COUNT(*) AS users,
                   COUNT(*) FILTER (WHERE email_verified) AS verified,
@@ -90,7 +98,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
           [],
           [{}]
         ),
-        safe(`SELECT COALESCE(plan, 'free') AS key, COUNT(*) AS n FROM users GROUP BY 1`, [], []),
+        safe(`SELECT CASE WHEN ${TRIAL_SQL} THEN 'trial' ELSE COALESCE(u.plan, 'free') END AS key, COUNT(*) AS n FROM users u GROUP BY 1`, [], []),
         safe(`SELECT COALESCE(NULLIF(platform, ''), 'none') AS key, COUNT(*) AS n FROM users GROUP BY 1`, [], []),
         safe(
           `SELECT to_char(d, 'YYYY-MM-DD') AS day, COUNT(u.id) AS n
@@ -107,6 +115,30 @@ module.exports = function founderRoutes(pool, authenticateToken) {
         safe(`SELECT COUNT(*) AS n FROM google_review_connections`, [], []),
         safe(`SELECT COUNT(*) AS teams, (SELECT COUNT(*) FROM team_members) AS members FROM teams`, [], [{}]),
         safe(`SELECT COUNT(*) AS n FROM users WHERE totp_enabled`, [], []),
+        // AI spend this calendar month (utils/aiSpend.js)
+        safe(
+          `SELECT COALESCE(SUM(cost_usd), 0)::float AS total, COALESCE(SUM(calls), 0)::int AS calls,
+                  COALESCE(SUM(cost_usd) FILTER (WHERE user_id = 0), 0)::float AS shared,
+                  COUNT(DISTINCT user_id) FILTER (WHERE user_id > 0)::int AS accounts
+             FROM ai_spend WHERE day >= date_trunc('month', CURRENT_DATE)`,
+          [],
+          [{}]
+        ),
+        safe(
+          `SELECT feature, SUM(cost_usd)::float AS cost, SUM(calls)::int AS calls
+             FROM ai_spend WHERE day >= date_trunc('month', CURRENT_DATE)
+            GROUP BY feature ORDER BY cost DESC LIMIT 8`,
+          [],
+          []
+        ),
+        safe(
+          `SELECT s.user_id, u.email, COALESCE(u.company_name, u.email) AS name, SUM(s.cost_usd)::float AS cost, SUM(s.calls)::int AS calls
+             FROM ai_spend s JOIN users u ON u.id = s.user_id
+            WHERE s.day >= date_trunc('month', CURRENT_DATE) AND s.user_id > 0
+            GROUP BY s.user_id, u.email, u.company_name ORDER BY cost DESC LIMIT 5`,
+          [],
+          []
+        ),
       ]);
 
       const t = totals[0] || {};
@@ -135,6 +167,14 @@ module.exports = function founderRoutes(pool, authenticateToken) {
           googleReviews: num(reviews),
         },
         teams: { teams: num(teams, "teams"), members: num(teams, "members") },
+        aiSpend: {
+          month: Math.round(((aiMonth[0] || {}).total || 0) * 100) / 100,
+          calls: (aiMonth[0] || {}).calls || 0,
+          shared: Math.round(((aiMonth[0] || {}).shared || 0) * 100) / 100,
+          accounts: (aiMonth[0] || {}).accounts || 0,
+          byFeature: aiByFeature.map((r) => ({ feature: r.feature, cost: Math.round(r.cost * 10000) / 10000, calls: r.calls })),
+          topAccounts: aiTop.map((r) => ({ userId: r.user_id, name: r.name, email: r.email, cost: Math.round(r.cost * 10000) / 10000, calls: r.calls })),
+        },
       });
     } catch (err) {
       console.error("Founder overview error:", err);
@@ -164,7 +204,11 @@ module.exports = function founderRoutes(pool, authenticateToken) {
         params.push(`%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
         where.push(`(u.email ILIKE $${params.length} OR u.company_name ILIKE $${params.length} OR u.name ILIKE $${params.length})`);
       }
-      if (plan) {
+      if (plan === "trial") {
+        where.push(TRIAL_SQL);
+      } else if (plan === "free") {
+        where.push(`COALESCE(u.plan, 'free') = 'free' AND NOT ${TRIAL_SQL}`);
+      } else if (plan) {
         params.push(plan);
         where.push(`COALESCE(u.plan, 'free') = $${params.length}`);
       }
@@ -178,7 +222,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
       const page = await pool.query(
         `SELECT u.id, u.email, u.name, u.company_name, COALESCE(u.plan, 'free') AS plan, u.platform,
                 u.business_type, u.location, u.email_verified, u.onboarded, u.created_at, u.last_login,
-                (u.google_id IS NOT NULL) AS google
+                (u.google_id IS NOT NULL) AS google, to_jsonb(u) AS urow
            FROM users u ${whereSql}
           ORDER BY ${SORTS[sort]}, u.id DESC
           LIMIT ${limit} OFFSET ${offset}`,
@@ -188,7 +232,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
       const idText = ids.map(String);
 
       // Connections for just this page of accounts (optional tables may be missing)
-      const [shops, squares, qbs, reviews, teams, twofa] = await Promise.all([
+      const [shops, squares, qbs, reviews, teams, twofa, spend] = await Promise.all([
         safe(
           `SELECT DISTINCT ON (user_id) user_id, store_name, store_origin FROM connected_stores
             WHERE user_id = ANY($1::int[]) ORDER BY user_id, is_active DESC, connected_at DESC`,
@@ -208,6 +252,12 @@ module.exports = function founderRoutes(pool, authenticateToken) {
           []
         ),
         safe(`SELECT id FROM users WHERE totp_enabled AND id = ANY($1::int[])`, [ids], []),
+        safe(
+          `SELECT user_id, SUM(cost_usd)::float AS cost FROM ai_spend
+            WHERE user_id = ANY($1::int[]) AND day >= date_trunc('month', CURRENT_DATE) GROUP BY user_id`,
+          [ids],
+          []
+        ),
       ]);
       const by = (rows, key) => new Map(rows.map((r) => [String(r[key]), r]));
       const shopBy = by(shops, "user_id");
@@ -216,6 +266,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
       const reviewBy = by(reviews, "user_id");
       const teamBy = by(teams, "user_id");
       const twofaBy = by(twofa, "id");
+      const spendBy = by(spend, "user_id");
 
       return res.json({
         success: true,
@@ -227,12 +278,15 @@ module.exports = function founderRoutes(pool, authenticateToken) {
           const shop = shopBy.get(id);
           const sq = squareBy.get(id);
           const team = teamBy.get(id);
+          const eff = effectivePlan(u.urow);
           return {
             id: u.id,
             email: u.email,
             name: u.name || "",
             company: u.company_name || "",
-            plan: u.plan,
+            plan: eff.trial ? "trial" : eff.billedPlan,
+            trialDaysLeft: eff.trial ? eff.trial.daysLeft : null,
+            aiCostMonth: spendBy.has(id) ? Math.round(spendBy.get(id).cost * 10000) / 10000 : 0,
             platform: u.platform || "",
             businessType: u.business_type || "",
             location: u.location || "",

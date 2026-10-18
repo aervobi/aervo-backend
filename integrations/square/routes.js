@@ -246,7 +246,7 @@ router.get('/customers/enriched', authenticateToken, async (req, res) => {
     });
     const customers = Array.from(seen.values());
 
-    // Segments (loyal / at risk / new...) are a paid feature: Starter gets the
+    // Segments (loyal / at risk / new...) are a paid feature: Lite gets the
     // plain customer list
     if (!limits.customerSegmentation) {
       customers.forEach((c) => { c.computed_segment = null; });

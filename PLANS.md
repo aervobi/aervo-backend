@@ -5,18 +5,28 @@ Plan limits live in `config/plans.js` and are enforced by the server through
 site); the server is the real gate and fails closed. The public pricing
 (`pricing/index.html`, homepage pricing) must match this file.
 
-Plan keys: `free` (shown as **Starter**), `essential`, `pro`, `business`.
+Plan keys: `free` (shown as **Lite**, not sold), `essential` $29, `pro` $69, `business` $149 a month
+(yearly = 2 months free). Repriced 2026-10-17 from $19/$49/$99. Subscribers on the old prices keep
+them: the legacy Stripe price IDs and Shopify amounts are still recognised.
 
-_Last reviewed: 2026-10-17 (Local Market phase 1 added)_
+**Trial:** every new account is on Pro for 14 days, no card (`trialFor` in `utils/planAccess.js`;
+nothing stored, it's derived from `created_at`). No trial for team staff, accounts that ever had a
+subscription, or after a checkout trial. Choosing Pro during the trial carries the days left into
+Stripe/Shopify. After the trial without a plan: **Lite** (Overview, 7 days, no AI, no emails, no briefing).
+
+_Last reviewed: 2026-10-17 (repricing, trial + Lite, fair-use caps, AI spend tracking)_
 
 ## Enforced today
 
-| Feature | Starter | Essential | Pro | Business | Where it's enforced |
+| Feature | Lite | Essential | Pro | Business | Where it's enforced |
 |---|---|---|---|---|---|
 | Sales sources (Shopify / Square) | 1 | 1 | 2 | 2 | Shopify + Square connect (`checkSourceLimit`) |
 | Shopify stores | 1 | 1 | 2 | 5 | Shopify connect (`maxLocations`) |
 | Data history | 7 days | 90 days | 2 years | Unlimited | Square orders, top items, appointments (past), customer spend; IMS sales + summary; Shopify orders + overview |
-| Ask Aervo messages | 3 / month | Unlimited | Unlimited | Unlimited | `/api/ai/chat`, `/api/intelligence/chat` (`aiQuota`, table `ai_usage`) |
+| Ask Aervo messages | none (Lite) | 500 / month fair use | 1,500 fair use | 5,000 fair use | `/api/ai/chat`, `/api/intelligence/chat` (`aiQuota`, table `ai_usage`); pricing page says "unlimited, fair use" |
+| AI insights (Intelligence) | built-in only | cached 6h | cached 6h | cached 6h | `/api/intelligence/insights` |
+| Daily summary email | No | Yes | Yes | Yes | `runDailySummaries` skips Lite |
+| CSV uploads / month | 1 | 5 | 10 | 25 | `routes/csvUpload.js` (`csvUploadsPerMonth`) |
 | Dashboard tabs | Overview only | All | All | All | Square + Shopify dashboards (page-level lock) |
 | Customer segments | No | Yes | Yes | Yes | Square `/customers/enriched` drops segments |
 | Google Reviews | No | Yes | Yes | Yes | `/api/google-reviews` (`requirePlan`) |
@@ -30,7 +40,7 @@ _Last reviewed: 2026-10-17 (Local Market phase 1 added)_
 Notes:
 - Upcoming appointments always show; the history limit applies to the past.
 - QuickBooks is accounting, not a sales source, so it isn't counted or gated yet.
-- IMS (manual inventory) tabs aren't locked on Starter, because they're where data is
+- IMS (manual inventory) tabs aren't locked on Lite, because they're where data is
   entered; only history is limited.
 - Founder accounts switch plans for free (`/api/founder/plan`) and are gated like anyone
   else on the plan they pick.
@@ -59,9 +69,9 @@ Marked "coming soon" on the pricing pages until they ship.
 ## Known gaps in enforcement
 
 - **AI answers can mention older data.** The chat's business context covers the last
-  30–90 days for every plan (`utils/aiContext.js`), so Starter's AI can mention data
+  30–90 days for every plan (`utils/aiContext.js`), so a plan's AI can mention data
   older than 7 days.
-- **Square dashboard tabs are locked in the page, not on the server.** A Starter user
+- **Square dashboard tabs are locked in the page, not on the server.** A Lite user
   calling the API directly can still read their own orders and appointments within 7 days.
 - **Shopify installs from the Shopify App Store bypass the source limit.** They don't go
   through `/auth/shopify/connect`, so the limit isn't checked there.
@@ -70,3 +80,10 @@ Marked "coming soon" on the pricing pages until they ship.
 - **Unused features in `config/plans.js`.** `revenueForecast`, `winBackCampaigns`,
   `aiMarketingCopy`, `whiteLabel` and `competitorBenchmarking` exist there but nothing
   uses them yet; gate each with `requireFeature(pool, "<name>")` when it ships.
+
+## AI spend tracking
+
+`utils/aiSpend.js` hooks the Anthropic SDK and records every Claude call's estimated cost per
+account per day in `ai_spend` (shared work such as city briefings is user 0). The Founder view shows
+this month's total, shared spend, cost by feature, top accounts and each customer's AI cost. Update
+`RATES` there if Anthropic's prices change. Weekly briefings are shared by **city + business type**.

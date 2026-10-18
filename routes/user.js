@@ -32,7 +32,7 @@ const { isValidTimeZone } = require("../utils/tzdate");
 const { teamSummaryFor } = require("./team");
 const { isFounder } = require("./founder");
 const PLANS = require("../config/plans");
-const { aiUsage } = require("../utils/planAccess");
+const { aiUsage, planFor } = require("../utils/planAccess");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -85,7 +85,8 @@ module.exports = (pool, authenticateToken) => {
       }
 
       const team = await teamSummaryFor(pool, req.user.userId);
-      const planKey = PLANS[user.plan] ? user.plan : "free";
+      const eff = await planFor(pool, req.user.userId); // a trial counts as Pro
+      const planKey = eff.plan;
       const ai = await aiUsage(pool, req.user.userId).catch(() => null);
 
       return res.json({
@@ -107,7 +108,9 @@ module.exports = (pool, authenticateToken) => {
     companyLogoUrl: user.company_logo_url,
     createdAt:      user.created_at,
     lastLogin:      user.last_login,
-    plan:           user.plan || 'free',
+    plan:           planKey,               // the plan in effect now (a trial counts as Pro)
+    billingPlan:    eff.billedPlan,         // what they actually pay for
+    trial:          eff.trial,              // { plan, endsAt, daysLeft } or null
     isFounder:      isFounder(user),
     squareMerchantId: user.square_merchant_id,
   },

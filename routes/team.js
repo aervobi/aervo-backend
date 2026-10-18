@@ -19,6 +19,7 @@ const express = require("express");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const PLANS = require("../config/plans");
+const { planFor, effectivePlan } = require("../utils/planAccess");
 const { startSession } = require("../middleware/auth");
 
 const ROLES = ["owner", "supervisor", "member"];
@@ -98,7 +99,7 @@ async function ensureTeamTables(pool) {
 // The caller's membership (or null), joined with the team and the owner's plan.
 async function membershipOf(db, userId, { lock = false } = {}) {
   const r = await db.query(
-    `SELECT tm.team_id, tm.role, t.name, t.owner_user_id, t.created_at, COALESCE(o.plan, 'free') AS owner_plan
+    `SELECT tm.team_id, tm.role, t.name, t.owner_user_id, t.created_at, to_jsonb(o) AS owner_row
        FROM team_members tm
        JOIN teams t ON t.id = tm.team_id
        JOIN users o ON o.id = t.owner_user_id
@@ -106,7 +107,11 @@ async function membershipOf(db, userId, { lock = false } = {}) {
       ${lock ? "FOR UPDATE OF t" : ""}`,
     [userId]
   );
-  return r.rows[0] || null;
+  const m = r.rows[0];
+  if (!m) return null;
+  m.owner_plan = effectivePlan(m.owner_row).plan; // an owner on trial counts as Pro
+  delete m.owner_row;
+  return m;
 }
 
 // Members plus open (not expired) invites
@@ -226,8 +231,8 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
       const userId = req.user.userId;
       const m = await membershipOf(pool, userId);
       if (!m) {
-        const u = await pool.query("SELECT COALESCE(plan, 'free') AS plan, company_name FROM users WHERE id = $1", [userId]);
-        const plan = u.rows[0]?.plan || "free";
+        const u = await pool.query("SELECT company_name FROM users WHERE id = $1", [userId]);
+        const { plan } = await planFor(pool, userId);
         return res.json({
           success: true,
           team: null,
@@ -304,8 +309,7 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
       if (!name || name.length > 60) throw new HttpError(400, "Team name must be 1 to 60 characters.");
 
       const team = await withTransaction(pool, async (client) => {
-        const u = await client.query("SELECT COALESCE(plan, 'free') AS plan FROM users WHERE id = $1", [userId]);
-        const plan = u.rows[0]?.plan || "free";
+        const { plan } = await planFor(client, userId);
         if (seatLimit(plan) <= 0) {
           throw new HttpError(403, "Teams are available on the Pro and Business plans.", {
             code: "PLAN_LIMIT",

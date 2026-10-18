@@ -3,7 +3,8 @@
 // Limits live in config/plans.js; every gate goes through here so they behave
 // the same way and fail CLOSED (an error never unlocks a paid feature).
 //
-//  - planFor(pool, userId)        -> { plan, limits }
+//  - planFor(pool, userId)        -> { plan, limits, trial } (the EFFECTIVE plan: trials count as Pro)
+//  - effectivePlan(userRow)       -> same, from a users row you already have
 //  - requireFeature(pool, name)   -> middleware: 403 PLAN_LIMIT unless limits[name] is truthy
 //  - historyStart(limits)         -> Date (oldest data the plan may see) or null (unlimited)
 //  - clampFrom(from, limits)      -> the later of a requested start date and the plan's start
@@ -12,12 +13,38 @@
 const PLANS = require("../config/plans");
 
 const PLAN_ORDER = ["free", "essential", "pro", "business"];
-const PLAN_NAMES = { free: "Starter", essential: "Essential", pro: "Pro", business: "Business" };
+const PLAN_NAMES = { free: "Lite", essential: "Essential", pro: "Pro", business: "Business" };
+
+// ── 14-day Pro trial ─────────────────────────────────────────────────────────
+// Every new account is on Pro for its first TRIAL_DAYS, no card needed. It
+// isn't stored as a plan: an account on "free" that is younger than the trial
+// simply counts as Pro. Not for accounts that have ever had a paid
+// subscription, used up a trial at checkout, or were added as team staff.
+const TRIAL_DAYS = 14;
+const TRIAL_PLAN = "pro";
+
+function trialFor(row, now = Date.now()) {
+  if (!row || !row.created_at) return null;
+  if (row.stripe_subscription_id || row.pro_trial_used_at) return null;
+  if (String(row.role || "").toLowerCase() === "team member") return null;
+  const endsAt = new Date(new Date(row.created_at).getTime() + TRIAL_DAYS * 86400000);
+  const msLeft = endsAt.getTime() - now;
+  if (msLeft <= 0) return null;
+  return { plan: TRIAL_PLAN, endsAt: endsAt.toISOString(), daysLeft: Math.ceil(msLeft / 86400000) };
+}
+
+// The plan an account actually gets right now
+function effectivePlan(row) {
+  const billed = row && PLANS[row.plan] ? row.plan : "free";
+  const trial = billed === "free" ? trialFor(row) : null;
+  const plan = trial ? trial.plan : billed;
+  return { plan, billedPlan: billed, limits: PLANS[plan], trial };
+}
 
 async function planFor(pool, userId) {
-  const r = await pool.query("SELECT COALESCE(plan, 'free') AS plan FROM users WHERE id = $1", [userId]);
-  const plan = PLANS[r.rows[0]?.plan] ? r.rows[0].plan : "free";
-  return { plan, limits: PLANS[plan] };
+  // to_jsonb(u) so this works whichever optional billing columns exist yet
+  const r = await pool.query("SELECT to_jsonb(u) AS u FROM users u WHERE id = $1", [userId]);
+  return effectivePlan(r.rows[0] ? r.rows[0].u : null);
 }
 
 // Lowest plan whose limit for `feature` is truthy (or above `atLeast` for numbers)
@@ -108,6 +135,18 @@ function aiQuota(pool) {
       const { plan, limits } = await planFor(pool, req.user.userId);
       const limit = limits.aiMessagesPerMonth;
       if (limit === Infinity || limit == null) return next();
+      if (limit <= 0) {
+        return res.status(403).json(
+          planLimitError({
+            code: "AI_LIMIT",
+            feature: "aiMessagesPerMonth",
+            currentPlan: plan,
+            requiredPlan: "essential",
+            message: "Ask Aervo is included with every paid plan. Choose a plan to keep asking questions about your business.",
+            extra: { limit: 0, remaining: 0 },
+          })
+        );
+      }
       await ensureUsageTable(pool);
       const p = period();
       const r = await pool.query(
@@ -123,8 +162,8 @@ function aiQuota(pool) {
             code: "AI_LIMIT",
             feature: "aiMessagesPerMonth",
             currentPlan: plan,
-            requiredPlan: "essential",
-            message: `You've used all ${limit} Ask Aervo messages for this month. Upgrade to Essential for unlimited questions.`,
+            requiredPlan: plan === "essential" ? "pro" : "business",
+            message: `You've reached this month's fair-use limit of ${limit} Ask Aervo messages. It resets on the 1st; contact us if you need more.`,
             extra: { limit, remaining: 0 },
           })
         );
@@ -157,7 +196,7 @@ async function aiUsage(pool, userId) {
 }
 
 // ── Connected sales sources (Shopify / Square) ─────────────────────────────
-// `integrations` in config/plans.js counts sales sources: Starter and Essential
+// `integrations` in config/plans.js counts sales sources: Lite and Essential
 // get one (Shopify OR Square), Pro both. Extra Shopify stores count toward
 // `maxLocations`. Reconnecting a source you already have is always allowed.
 // QuickBooks is accounting, not a sales source, and isn't counted.
@@ -201,6 +240,9 @@ async function checkSourceLimit(pool, userId, adding, { shop } = {}) {
 }
 
 module.exports = {
+  TRIAL_DAYS,
+  trialFor,
+  effectivePlan,
   checkSourceLimit,
   PLAN_NAMES,
   planFor,

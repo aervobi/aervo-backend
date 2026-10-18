@@ -11,6 +11,10 @@ const Anthropic = require("@anthropic-ai/sdk");
 const { squareContext, imsContext, buildMessages } = require("../../utils/aiContext");
 
 const { CHAT_MODEL, INSIGHT_MODEL, replyText, PLAIN_TEXT_RULE } = require("../../utils/aiModels");
+const crypto = require("crypto");
+const { planFor } = require("../../utils/planAccess");
+const INSIGHT_CACHE_MS = 6 * 3600 * 1000;
+const insightCache = new Map(); // `${userId}:${hash of the page's numbers}` -> { insights, expires }
 
 const INDUSTRIES = {
   retail: "Retail", food: "Food & Bev", beauty: "Beauty", apparel: "Apparel",
@@ -76,6 +80,16 @@ module.exports = (pool, authenticateToken) => {
     if (!anthropic) return res.json({ success: true, insights: [], fallback: true });
 
     try {
+      // Lite accounts get the page's built-in insights (no AI call)
+      const { limits } = await planFor(pool, req.user.userId);
+      if (!limits.aiMessagesPerMonth) return res.json({ success: true, insights: [], fallback: true });
+
+      // The page asks again on every visit; the same numbers get the same
+      // insights for a few hours instead of a new AI call each time
+      const cacheKey = `${req.user.userId}:${crypto.createHash("sha256").update(text + "|" + source).digest("hex")}`;
+      const hit = insightCache.get(cacheKey);
+      if (hit && hit.expires > Date.now()) return res.json({ success: true, insights: hit.insights, cached: true });
+
       const context = await accountContext(req.user.userId, source);
       const msg = await anthropic.messages.create({
         model: INSIGHT_MODEL,
@@ -100,6 +114,8 @@ module.exports = (pool, authenticateToken) => {
           body: i.body.slice(0, 400),
         }));
       if (insights.length === 0) throw new Error("no usable insights");
+      if (insightCache.size > 5000) insightCache.clear(); // keep memory bounded
+      insightCache.set(cacheKey, { insights, expires: Date.now() + INSIGHT_CACHE_MS });
       res.json({ success: true, insights });
     } catch (err) {
       console.error("Intelligence insights error:", err.message);

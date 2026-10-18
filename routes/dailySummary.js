@@ -15,6 +15,8 @@ const { JWT_SECRET } = require("../middleware/auth");
 const { buildSummary, writeInsight, renderEmail } = require("../utils/dailySummary");
 const { isValidTimeZone, localDate, localHour } = require("../utils/tzdate");
 const { CHAT_MODEL, replyText } = require("../utils/aiModels");
+const { effectivePlan, planFor } = require("../utils/planAccess");
+const { withAiContext } = require("../utils/aiSpend");
 
 const SEND_HOUR = () => Number(process.env.DAILY_SUMMARY_HOUR) || 7;
 const LAST_HOUR = 22; // don't send "good morning" after 10pm local
@@ -89,7 +91,7 @@ async function runDailySummaries(pool, opts = {}) {
 
   const rows = (
     await pool.query(
-      `SELECT u.id, u.email, u.name, u.company_name, u.platform,
+      `SELECT u.id, u.email, u.name, u.company_name, u.platform, to_jsonb(u) AS urow,
               np.timezone, np.revenue_alerts, np.inventory_alerts,
               to_char(np.last_daily_sent_on, 'YYYY-MM-DD') AS last_sent
        FROM notification_preferences np
@@ -101,7 +103,8 @@ async function runDailySummaries(pool, opts = {}) {
   for (const row of rows) {
     stats.checked++;
     try {
-      if (!isRealEmail(row.email)) {
+      // Lite accounts (trial over, no paid plan) don't get the daily email
+      if (!isRealEmail(row.email) || effectivePlan(row.urow).plan === "free") {
         stats.skipped++;
         continue;
       }
@@ -133,7 +136,9 @@ async function runDailySummaries(pool, opts = {}) {
 
       try {
         attempts.set(key, (attempts.get(key) || 0) + 1);
-        await sendSummaryTo(pool, row, { now, tz, sender, anthropic, fetchImpl: opts.fetchImpl });
+        await withAiContext({ userId: row.id, feature: "daily-summary" }, () =>
+          sendSummaryTo(pool, row, { now, tz, sender, anthropic, fetchImpl: opts.fetchImpl })
+        );
         stats.sent++;
         if (pauseMs) await sleep(pauseMs);
       } catch (err) {
@@ -177,6 +182,14 @@ module.exports = function dailySummaryRoutes(pool, authenticateToken) {
   router.post("/api/user/daily-summary/test", authenticateToken, async (req, res) => {
     try {
       const id = req.user.userId;
+      if ((await planFor(pool, id)).plan === "free") {
+        return res.status(403).json({
+          success: false,
+          code: "PLAN_LIMIT",
+          requiredPlan: "essential",
+          message: "The daily summary email is included with every paid plan.",
+        });
+      }
       const recent = (testLog.get(id) || []).filter((t) => Date.now() - t < 3600 * 1000);
       if (recent.length >= 3) {
         return res.status(429).json({ success: false, message: "That's 3 test emails in the last hour. Please try again later." });

@@ -1,7 +1,7 @@
 // utils/marketBriefing.js
 // "This week in <city>": the weekly AI briefing on the Local Market tab.
 //
-// One briefing per ZIP + business type per week, shared by every store that
+// One briefing per city + business type per week, shared by every store that
 // matches (see routes/market.js for caching and the Monday job). Claude
 // researches the area with the web search tool and returns 3-6 items as JSON.
 //
@@ -121,7 +121,7 @@ function parseBriefing(text, sources) {
 /**
  * @param {object} p
  * @param {import("@anthropic-ai/sdk").default} p.anthropic
- * @param {{city:string, state:string, zip:string, timezone?:string}} p.area
+ * @param {{city:string, state:string, timezone?:string}} p.area
  * @param {string} p.categoryLabel  e.g. "Coffee shop"
  * @param {string} p.weekStart      YYYY-MM-DD (Monday)
  * @param {string} p.weekEnd        YYYY-MM-DD (Sunday)
@@ -135,7 +135,7 @@ async function generateBriefing({ anthropic, area, categoryLabel, weekStart, wee
     {
       role: "user",
       content:
-        `Business: ${categoryLabel} in ${area.city}, ${area.state} (ZIP ${area.zip}).\n` +
+        `Business: ${categoryLabel} in ${area.city}, ${area.state}.\n` +
         `Week: ${weekStart} to ${weekEnd}.\n\n` +
         `Find what matters for this business this week: local events and crowds (sports, concerts, festivals, ` +
         `university or military schedules), local news (road work, openings and closings, city decisions), the local ` +

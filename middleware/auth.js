@@ -220,6 +220,8 @@ async function authenticateToken(req, res, next) {
 
   req.user = payload;
   req.authViaCookie = viaCookie;
+  // AI calls made while handling this request are this account's spend
+  require("../utils/aiSpend").enterRequest(payload.userId, req.originalUrl);
   next();
 }
 

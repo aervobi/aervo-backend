@@ -159,6 +159,9 @@ const pool = new Pool({
 });
 
 app.locals.pool = pool;
+
+// Record what every Claude call costs, per account (Founder view → AI cost)
+require("./utils/aiSpend").install(pool);
 initAuth(pool); // adds users.token_version (session revocation)
 
 // ==============================
@@ -315,7 +318,7 @@ app.use("/", marketRoutes);
 
 // Intelligence Center AI (insights + advisor chat). aiLimiter: these cost money per call.
 app.use(["/api/intelligence/insights", "/api/intelligence/chat"], aiLimiter);
-// Ask Aervo allowance per plan (Starter: 3 a month). Every chat endpoint counts.
+// Ask Aervo allowance per plan (Lite: none; paid plans: a fair-use monthly cap). Every chat endpoint counts.
 app.use(["/api/ai/chat", "/api/intelligence/chat"], authenticateToken, aiQuota(pool));
 app.use("/", require("./routes/intelligence/ai")(pool, authenticateToken));
 

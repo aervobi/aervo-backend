@@ -1,12 +1,23 @@
 // What each plan includes. The server enforces these through utils/planAccess.js;
 // the pricing page (pricing/index.html) must say the same thing.
-// Infinity = unlimited. Plan keys: free (shown as "Starter"), essential, pro, business.
+// Infinity = unlimited. Plan keys: free (shown as "Lite"), essential, pro, business.
+//
+// New accounts get a 14-day Pro trial with no card (utils/planAccess.js
+// effectivePlan). When it ends without a paid plan they drop to "Lite": a
+// near-zero-cost, read-only mode (Overview, 7 days, no AI) that keeps the
+// door open for win-back. Lite is not sold or shown on the pricing page.
+//
+// aiMessagesPerMonth on paid plans is a fair-use cap (the pricing page says
+// "unlimited"): almost nobody reaches it, but it stops one account from
+// erasing a plan's margin.
 const PLANS = {
   free: {
-    name: "Starter",
+    name: "Lite",
+    priceMonthly: 0,
     integrations: 1,
     dataHistoryDays: 7,
-    aiMessagesPerMonth: 3,
+    aiMessagesPerMonth: 0,
+    csvUploadsPerMonth: 1,
     fullDashboard: false,
     googleReviews: false,
     customerSegmentation: false,
@@ -24,9 +35,11 @@ const PLANS = {
   },
   essential: {
     name: "Essential",
+    priceMonthly: 29,
     integrations: 1,
     dataHistoryDays: 90,
-    aiMessagesPerMonth: Infinity,
+    aiMessagesPerMonth: 500,
+    csvUploadsPerMonth: 5,
     fullDashboard: true,
     googleReviews: 50,
     customerSegmentation: true,
@@ -44,9 +57,11 @@ const PLANS = {
   },
   pro: {
     name: "Pro",
+    priceMonthly: 69,
     integrations: 2,
     dataHistoryDays: 730,
-    aiMessagesPerMonth: Infinity,
+    aiMessagesPerMonth: 1500,
+    csvUploadsPerMonth: 10,
     fullDashboard: true,
     googleReviews: Infinity,
     customerSegmentation: true,
@@ -64,9 +79,11 @@ const PLANS = {
   },
   business: {
     name: "Business",
+    priceMonthly: 149,
     integrations: 5,
     dataHistoryDays: Infinity,
-    aiMessagesPerMonth: Infinity,
+    aiMessagesPerMonth: 5000,
+    csvUploadsPerMonth: 25,
     fullDashboard: true,
     googleReviews: Infinity,
     customerSegmentation: true,
