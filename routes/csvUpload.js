@@ -5,6 +5,7 @@ const { parse } = require("csv-parse/sync");
 const XLSX = require("xlsx");
 const Anthropic = require("@anthropic-ai/sdk");
 const { planFor } = require("../utils/planAccess");
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -172,12 +173,12 @@ Compute the metrics from the actual data. For example if there's a revenue colum
       let analysisResult = null;
       try {
         const aiResponse = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
+          model: AI_MODEL,
           max_tokens: 1000,
           messages: [{ role: "user", content: analysisPrompt }]
         });
 
-        const rawText = aiResponse.content[0]?.text || "{}";
+        const rawText = replyText(aiResponse) || "{}";
         const cleanJson = rawText.replace(/```json|```/g, "").trim();
         analysisResult = JSON.parse(cleanJson);
       } catch (aiErr) {
@@ -305,7 +306,7 @@ Compute the metrics from the actual data. For example if there's a revenue colum
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
+        model: AI_MODEL,
         max_tokens: 500,
         system: `You are Aervo, an expert business analyst. The user has uploaded a CSV file called "${upload.filename}" with ${upload.row_count} rows of data.
 
@@ -318,7 +319,7 @@ Answer the user's questions about this specific data. Be specific, reference act
         messages
       });
 
-      const answer = response.content[0]?.text || "I couldn't generate an answer. Please try again.";
+      const answer = replyText(response) || "I couldn't generate an answer. Please try again.";
 
       // Save question and answer
       await pool.query(
@@ -475,11 +476,11 @@ Respond ONLY with a JSON object, no markdown:
     let analysisResult = null;
     try {
       const aiResponse = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
+        model: AI_MODEL,
         max_tokens: 800,
         messages: [{ role: "user", content: analysisPrompt }]
       });
-      const raw = aiResponse.content[0]?.text || "{}";
+      const raw = replyText(aiResponse) || "{}";
       analysisResult = JSON.parse(raw.replace(/```json|```/g, "").trim());
     } catch (e) {
       analysisResult = { detectedType: "other", columns: {}, summary: "Data uploaded.", insights: "Your data has been processed." };
@@ -644,7 +645,7 @@ ${(rd.tableRows || []).slice(0, 20).map(r => r.join(", ")).join("\n")}`.trim();
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: AI_MODEL,
       max_tokens: 600,
       system: `You are Aervo, an expert AI business analyst. The user has uploaded their sales data as a CSV.
 Answer questions about their business using the data below. Be specific, reference real numbers, and give actionable advice.
@@ -659,13 +660,13 @@ ${goalsContext}`,
     if (uploadId) {
       await pool.query(
         `INSERT INTO csv_questions (user_id, upload_id, question, answer) VALUES ($1, $2, $3, $4)`,
-        [req.user.userId, uploadId, message.trim(), response.content[0]?.text || ""]
+        [req.user.userId, uploadId, message.trim(), replyText(response) || ""]
       ).catch(() => {});
     }
 
     return res.json({
       success: true,
-      reply: response.content[0]?.text || "Sorry, I couldn't generate a response."
+      reply: replyText(response) || "Sorry, I couldn't generate a response."
     });
 
   } catch (err) {

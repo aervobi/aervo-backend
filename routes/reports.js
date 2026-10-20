@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -382,12 +383,12 @@ Write a 3-4 sentence business insight paragraph. Comment on discount strategy, r
       try {
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const aiResponse = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
+          model: AI_MODEL,
           max_tokens: 300,
           system: "You are Aervo, an expert business analyst. Write clear, specific, actionable business insights based on real store data. Be conversational but professional. Never use bullet points — write in flowing paragraphs.",
           messages: [{ role: "user", content: aiPrompt }]
         });
-        aiInsights = aiResponse.content[0]?.text || "";
+        aiInsights = replyText(aiResponse) || "";
       } catch (aiErr) {
         console.error("AI insights error:", aiErr);
         aiInsights = "AI insights temporarily unavailable.";

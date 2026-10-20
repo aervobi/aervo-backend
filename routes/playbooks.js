@@ -5,6 +5,7 @@
 
 const express   = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 module.exports = function (pool, authenticateToken) {
   const router   = express.Router();
@@ -163,12 +164,12 @@ Example format:
 ]`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: AI_MODEL,
     max_tokens: 1500,
     messages: [{ role: 'user', content: prompt }],
   });
 
-  const raw = response.content[0].text.trim();
+  const raw = replyText(response).trim();
   const steps = JSON.parse(raw);
   return steps;
 }

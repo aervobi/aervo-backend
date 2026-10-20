@@ -18,6 +18,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const { buildMessages } = require("./utils/aiContext");
 const { replyText, PLAIN_TEXT_RULE } = require("./utils/aiModels");
 const twoFactorRoutes = require("./routes/twoFactor");
+const { AI_MODEL } = require("./utils/aiModels");
 const { requiresSecondFactor } = twoFactorRoutes;
 
 const {
@@ -160,8 +161,16 @@ const pool = new Pool({
 
 app.locals.pool = pool;
 
-// Record what every Claude call costs, per account (Founder view → AI cost)
-require("./utils/aiSpend").install(pool);
+// Record what every Claude call costs, per account (Founder view → AI cost), and
+// enforce the AI budget (utils/aiBudget.js). Budget alerts go to the founders.
+require("./utils/aiSpend").install(pool, {
+  sendEmail: ({ subject, text }) =>
+    require("./utils/email").sendFounderAlert({
+      to: (process.env.FOUNDER_EMAILS || "omardavila20@gmail.com").split(",").map((e) => e.trim()).filter(Boolean),
+      subject,
+      text,
+    }),
+});
 initAuth(pool); // adds users.token_version (session revocation)
 
 // ==============================
@@ -312,7 +321,7 @@ app.use("/", marginRoutes);
 const digestRoutes = require("./routes/intelligence/digest")(pool, authenticateToken);
 app.use("/", digestRoutes);
 
-// Intelligence Center: Local Market (area facts, 7-day demand forecast, weekly briefing)
+// Intelligence Center: Local Market (area facts, 7-day demand forecast, Weekly Marketing Brief)
 const marketRoutes = require("./routes/market")(pool, authenticateToken);
 app.use("/", marketRoutes);
 
@@ -351,7 +360,7 @@ cron.schedule(
   { timezone: "UTC" }
 );
 
-// Weekly Local Market briefings: prepared Monday morning for every area with a
+// Weekly Marketing Briefs: prepared Monday morning for every area with a
 // store on a plan that includes them (stores that look earlier get theirs on demand)
 cron.schedule(
   "0 12 * * 1",
@@ -1042,7 +1051,7 @@ Avg Lifetime Value: $${
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: AI_MODEL,
       max_tokens: 1024,
       system: `You are Aervo, an expert AI business analyst and co-pilot for Shopify merchants.
 You have real-time data from this merchant's Shopify store. Your job is to:

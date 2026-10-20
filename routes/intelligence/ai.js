@@ -14,7 +14,36 @@ const { CHAT_MODEL, INSIGHT_MODEL, replyText, PLAIN_TEXT_RULE } = require("../..
 const crypto = require("crypto");
 const { planFor } = require("../../utils/planAccess");
 const INSIGHT_CACHE_MS = 6 * 3600 * 1000;
-const insightCache = new Map(); // `${userId}:${hash of the page's numbers}` -> { insights, expires }
+// Insights cache in the database (survives deploys/restarts, shared by instances):
+// `${userId}:${hash of the page's numbers}` -> insights, for INSIGHT_CACHE_MS
+let insightTable = null;
+function insightCache(pool) {
+  if (!insightTable) {
+    insightTable = pool
+      .query(`CREATE TABLE IF NOT EXISTS ai_insight_cache (key TEXT PRIMARY KEY, insights JSONB NOT NULL, expires_at TIMESTAMPTZ NOT NULL)`)
+      .catch((err) => {
+        insightTable = null;
+        throw err;
+      });
+  }
+  return {
+    async get(key) {
+      await insightTable;
+      const r = await pool.query(`SELECT insights FROM ai_insight_cache WHERE key = $1 AND expires_at > NOW()`, [key]);
+      return r.rows[0] ? r.rows[0].insights : null;
+    },
+    async set(key, insights) {
+      await insightTable;
+      await pool.query(
+        `INSERT INTO ai_insight_cache (key, insights, expires_at) VALUES ($1, $2, NOW() + ($3 || ' milliseconds')::interval)
+         ON CONFLICT (key) DO UPDATE SET insights = EXCLUDED.insights, expires_at = EXCLUDED.expires_at`,
+        [key, JSON.stringify(insights), String(INSIGHT_CACHE_MS)]
+      );
+      // tidy up old rows now and then
+      if (Math.random() < 0.02) pool.query(`DELETE FROM ai_insight_cache WHERE expires_at < NOW()`).catch(() => {});
+    },
+  };
+}
 
 const INDUSTRIES = {
   retail: "Retail", food: "Food & Bev", beauty: "Beauty", apparel: "Apparel",
@@ -87,8 +116,9 @@ module.exports = (pool, authenticateToken) => {
       // The page asks again on every visit; the same numbers get the same
       // insights for a few hours instead of a new AI call each time
       const cacheKey = `${req.user.userId}:${crypto.createHash("sha256").update(text + "|" + source).digest("hex")}`;
-      const hit = insightCache.get(cacheKey);
-      if (hit && hit.expires > Date.now()) return res.json({ success: true, insights: hit.insights, cached: true });
+      const cache = insightCache(pool);
+      const hit = await cache.get(cacheKey).catch(() => null);
+      if (hit) return res.json({ success: true, insights: hit, cached: true });
 
       const context = await accountContext(req.user.userId, source);
       const msg = await anthropic.messages.create({
@@ -114,8 +144,7 @@ module.exports = (pool, authenticateToken) => {
           body: i.body.slice(0, 400),
         }));
       if (insights.length === 0) throw new Error("no usable insights");
-      if (insightCache.size > 5000) insightCache.clear(); // keep memory bounded
-      insightCache.set(cacheKey, { insights, expires: Date.now() + INSIGHT_CACHE_MS });
+      await cache.set(cacheKey, insights).catch((err) => console.warn("Insight cache write failed:", err.message));
       res.json({ success: true, insights });
     } catch (err) {
       console.error("Intelligence insights error:", err.message);

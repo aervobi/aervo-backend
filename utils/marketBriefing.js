@@ -1,5 +1,5 @@
 // utils/marketBriefing.js
-// "This week in <city>": the weekly AI briefing on the Local Market tab.
+// The Weekly Marketing Brief on the Local Market tab (one per city + business type per week).
 //
 // One briefing per city + business type per week, shared by every store that
 // matches (see routes/market.js for caching and the Monday job). Claude
@@ -10,12 +10,16 @@
 //    returned in this request; uncited items and made-up links are dropped
 //  - links must be http(s); text fields are length-capped plain text
 //  - a refusal or an unparseable answer is an error, never a half briefing
-const BRIEFING_MODEL = process.env.AERVO_BRIEFING_MODEL || "claude-opus-5-5";
+// The model comes from utils/aiModels.js (AERVO_AI_MODEL, or AERVO_BRIEFING_MODEL
+// for the brief alone); the SDK hook fits the request to it (search tool version,
+// fallbacks), so the request below can stay the same for any model.
+const { BRIEFING_MODEL } = require("./aiModels");
 const KINDS = ["event", "trend", "news", "economy", "competition", "weather", "other"];
 const MAX_ITEMS = 6;
 const MAX_CONTINUATIONS = 4; // pause_turn resumes for a long web search turn
+const MAX_SEARCHES = Math.max(1, Math.min(10, Number(process.env.AERVO_BRIEFING_MAX_SEARCHES) || 5));
 
-const SYSTEM = `You are Aervo's local market analyst. You write a short weekly briefing for the owner of a small brick-and-mortar business: what is happening in and around their area this week that could change their foot traffic, sales or plans.
+const SYSTEM = `You are Aervo's local marketing analyst. You write the Weekly Marketing Brief for the owner of a small brick-and-mortar business: what is happening in and around their area this coming week that could change their foot traffic or sales, and the marketing move to make about it (a promotion, a social post, a menu or display change, staffing or hours).
 
 Research with web search before writing. Prefer local news outlets, city and county announcements, event calendars, university and military base news, chambers of commerce and reputable national sources for category trends. Only use information you found in this conversation's search results.
 
@@ -31,7 +35,7 @@ When you have finished researching, reply with ONLY a JSON object (no markdown f
  "items": [{"kind": "event|trend|news|economy|competition|weather|other",
             "title": "max 80 characters",
             "body": "1-2 sentences, max 280 characters: what is happening and why it matters to this business",
-            "action": "one short suggested action, max 90 characters, or empty string",
+            "action": "one short marketing action for this week, max 90 characters, or empty string",
             "date": "YYYY-MM-DD if it happens on a specific day this week or next, else empty string",
             "sources": ["https://...", "..."]}]}
 Return between 3 and ${MAX_ITEMS} items, most useful first.`;
@@ -135,11 +139,13 @@ async function generateBriefing({ anthropic, area, categoryLabel, weekStart, wee
     {
       role: "user",
       content:
+        `Today's date is ${new Date().toISOString().slice(0, 10)}. Search for current local information; ` +
+        `don't rely on what you remember about this area.\n` +
         `Business: ${categoryLabel} in ${area.city}, ${area.state}.\n` +
         `Week: ${weekStart} to ${weekEnd}.\n\n` +
         `Find what matters for this business this week: local events and crowds (sports, concerts, festivals, ` +
         `university or military schedules), local news (road work, openings and closings, city decisions), the local ` +
-        `economy and consumer trends in this category. Then write the briefing.`,
+        `economy and consumer trends in this category. Then write this week's marketing brief.`,
     },
   ];
 
@@ -148,7 +154,8 @@ async function generateBriefing({ anthropic, area, categoryLabel, weekStart, wee
     max_tokens: 16000,
     system: SYSTEM,
     output_config: { effort: "medium" },
-    tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8, user_location: userLocation }],
+    // Each search adds result pages Claude reads (the main cost of a briefing)
+    tools: [{ type: "web_search_20260209", name: "web_search", max_uses: MAX_SEARCHES, user_location: userLocation }],
     // If a safety classifier declines, re-run on Anthropic's recommended model
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",

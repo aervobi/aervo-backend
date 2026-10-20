@@ -12,6 +12,8 @@
 //  - Cost is an estimate from list prices in RATES (per million tokens) plus
 //    web searches; update RATES if Anthropic's prices change.
 const { AsyncLocalStorage } = require("async_hooks");
+const budget = require("./aiBudget");
+const { adaptRequest } = require("./aiModels");
 
 const als = new AsyncLocalStorage();
 
@@ -38,7 +40,10 @@ function rateFor(model) {
 
 function costOf(model, usage) {
   if (!usage) return 0;
-  const r = rateFor(model);
+  let r = rateFor(model);
+  // Haiku 5.5 has a second rate card for prompts over 100K tokens
+  const prompt = (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+  if (String(model || "").startsWith("claude-haiku-5-5") && prompt > 100000) r = { input: 0.5, output: 2.5 };
   const M = 1e6;
   const searches = (usage.server_tool_use && usage.server_tool_use.web_search_requests) || 0;
   return (
@@ -96,6 +101,7 @@ async function record(model, usage, ctx) {
   const userId = ctx && Number.isInteger(ctx.userId) ? ctx.userId : 0;
   const feature = (ctx && ctx.feature) || "background";
   const searches = (usage.server_tool_use && usage.server_tool_use.web_search_requests) || 0;
+  budget.add(userId, costOf(model, usage)); // keep the guardrail totals current
   await pool.query(
     `INSERT INTO ai_spend (day, user_id, feature, model, calls, input_tokens, output_tokens, searches, cost_usd)
      VALUES (CURRENT_DATE, $1, $2, $3, 1, $4, $5, $6, $7)
@@ -121,10 +127,20 @@ function wrap(proto) {
   if (!proto || typeof proto.create !== "function" || proto.create.__aervoSpend) return;
   const original = proto.create;
   const wrapped = function (body, options) {
+    // Fit the request to the chosen model (see utils/aiModels.js adaptRequest)
+    body = adaptRequest(body);
+    const ctx = als.getStore();
+    // Guardrails: over budget or paused -> refuse before anything is sent.
+    // Every feature catches this and shows its non-AI fallback.
+    const allowed = budget.check({ userId: ctx && ctx.userId, feature: ctx && ctx.feature });
+    if (!allowed.ok) {
+      return Promise.reject(new budget.AiBudgetError(`AI paused (${allowed.reason})`, allowed));
+    }
     const result = original.call(this, body, options);
+    // Out of credits / bad key / rate limited: pause instead of failing every page
+    Promise.resolve(result).catch((err) => budget.noteError(err));
     // Streams report usage differently; only plain requests are counted
     if (body && body.stream) return result;
-    const ctx = als.getStore();
     Promise.resolve(result)
       .then((res) => record((res && res.model) || (body && body.model), res && res.usage, ctx))
       .catch(() => {}); // the caller handles its own errors; logging never breaks a feature
@@ -134,8 +150,9 @@ function wrap(proto) {
   proto.create = wrapped;
 }
 
-function install(dbPool) {
+function install(dbPool, opts = {}) {
   pool = dbPool;
+  budget.init(dbPool, opts);
   if (installed) return;
   installed = true;
   const sdk = require("@anthropic-ai/sdk");

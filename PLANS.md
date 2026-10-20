@@ -34,7 +34,7 @@ _Last reviewed: 2026-10-17 (repricing, trial + Lite, fair-use caps, AI spend tra
 | Team seats | 0 | 0 | 10 | 50 | Team invites (`routes/team.js`) |
 | Local market snapshot (Census + AI local angle) | No | Yes | Yes | Yes | `/api/market/snapshot` (`marketSnapshot`) |
 | 7-day demand forecast | No | No | Yes | Yes | `/api/market/forecast` (`demandForecast`) |
-| Weekly AI market briefing (web search, cited) | No | Yes | Yes | Yes | `/api/market/briefing` (`weeklyBriefing`); Pro also gets a "your week" item from its forecast |
+| Weekly Marketing Brief (web search, cited; once a week, new every Monday) | No | Yes | Yes | Yes | `/api/market/briefing` (`weeklyBriefing`); Pro also gets a "your week" item from its forecast |
 | Competitor radar (Google Places + AI review themes) | No | No | Yes | Yes | `/api/market/competitors` (`competitorRadar`) |
 | Trending near you (weekly review-count snapshots) | No | No | Yes | Yes | `/api/market/trending` (`trendingNearby`) |
 | 14-day Pro trial (card billing) | | | Once per account | | Stripe checkout (`pro_trial_used_at`) |
@@ -88,3 +88,20 @@ Marked "coming soon" on the pricing pages until they ship.
 account per day in `ai_spend` (shared work such as city briefings is user 0). The Founder view shows
 this month's total, shared spend, cost by feature, top accounts and each customer's AI cost. Update
 `RATES` there if Anthropic's prices change. Weekly briefings are shared by **city + business type**.
+
+## AI spend guardrails (2026-10-20)
+
+`utils/aiBudget.js` checks every Claude call before it is sent (through the SDK hook in `utils/aiSpend.js`):
+
+| Setting (Render env) | Default | What happens when reached |
+|---|---|---|
+| `AI_MONTHLY_BUDGET_USD` | 40 | background AI (briefings, competitor themes) stops at 70%, insights/health score at 90%, Ask Aervo at 100% |
+| `AI_DAILY_BUDGET_USD` | 6 | same tiers against the day (background 80%, insights 100%, chat 150%) |
+| `AI_ACCOUNT_DAILY_USD` | 0.75 | that one account's AI (chat, insights) pauses until tomorrow; shared work is unaffected |
+| `AERVO_BRIEFING_MAX_SEARCHES` | 5 | web searches per weekly briefing (was 8; the searches are most of its cost) |
+
+When paused, customers get the non-AI version: built-in insights, last week's briefing ("From the week of …"), and
+Ask Aervo says it's taking a short break (the message isn't counted against their allowance). A Claude "credit balance
+too low" / bad key error pauses all AI for 15 minutes (rate limits: 60s) instead of failing on every page, and emails the
+founders once per 6 hours. Founders also get one email at 50%, 80% and 100% of the monthly budget. The Founder view shows
+spend against budget and a banner whenever anything is paused.

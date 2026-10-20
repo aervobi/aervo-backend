@@ -9,6 +9,7 @@
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
 const { requirePlan } = require("../middleware/planGate");
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 const PLACE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
 const CACHE_MS = 6 * 60 * 60 * 1000; // reviews change slowly; saves quota + AI cost
@@ -98,7 +99,7 @@ async function analyze(anthropic, shaped) {
 
   try {
     const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: AI_MODEL,
       max_tokens: 1200,
       messages: [
         {

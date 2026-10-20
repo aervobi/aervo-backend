@@ -113,7 +113,7 @@ async function nearby({ key, fetchImpl = fetch, center, radiusMeters, types, ran
 }
 
 // ── AI review themes ─────────────────────────────────────────────────────────
-const THEMES_MODEL = process.env.AERVO_RADAR_MODEL || "claude-opus-5-5";
+const { RADAR_MODEL: THEMES_MODEL } = require("./aiModels"); // AERVO_AI_MODEL / AERVO_RADAR_MODEL
 const THEMES_SCHEMA = {
   type: "object",
   properties: {

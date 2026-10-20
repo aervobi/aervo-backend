@@ -24,7 +24,7 @@ const PLANS = {
     unifiedView: false, // one customer view across Shopify + Square
     marketSnapshot: false, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
-    weeklyBriefing: false, // Local Market: "This week in <city>" AI briefing
+    weeklyBriefing: false, // Local Market: Weekly Marketing Brief (researched once a week, new every Monday)
     competitorRadar: false, // Local Market: nearby competitors + review themes (Google Places)
     trendingNearby: false, // Local Market: fastest-growing and new places nearby
     revenueForecast: false,
@@ -48,7 +48,7 @@ const PLANS = {
     unifiedView: false, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: false, // Local Market: 7-day expected traffic
-    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    weeklyBriefing: true, // Local Market: Weekly Marketing Brief (researched once a week, new every Monday)
     competitorRadar: false, // Local Market: nearby competitors + review themes (Google Places)
     trendingNearby: false, // Local Market: fastest-growing and new places nearby
     revenueForecast: false,
@@ -72,7 +72,7 @@ const PLANS = {
     unifiedView: true, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
-    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    weeklyBriefing: true, // Local Market: Weekly Marketing Brief (researched once a week, new every Monday)
     competitorRadar: true, // Local Market: nearby competitors + review themes (Google Places)
     trendingNearby: true, // Local Market: fastest-growing and new places nearby
     revenueForecast: true,
@@ -96,7 +96,7 @@ const PLANS = {
     unifiedView: true, // one customer view across Shopify + Square
     marketSnapshot: true, // Local Market: area facts (Census) + local angle
     demandForecast: true, // Local Market: 7-day expected traffic
-    weeklyBriefing: true, // Local Market: "This week in <city>" AI briefing
+    weeklyBriefing: true, // Local Market: Weekly Marketing Brief (researched once a week, new every Monday)
     competitorRadar: true, // Local Market: nearby competitors + review themes (Google Places)
     trendingNearby: true, // Local Market: fastest-growing and new places nearby
     revenueForecast: true,

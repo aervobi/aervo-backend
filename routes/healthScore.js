@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -145,7 +146,7 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
     // ── AI SUMMARY ────────────────────────────────────────────
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const aiResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: AI_MODEL,
       max_tokens: 400,
       messages: [{
         role: "user",
@@ -167,7 +168,7 @@ Respond ONLY with JSON (no markdown):
 
     let aiData = { summary: "", positives: [], improvements: [] };
     try {
-      aiData = JSON.parse(aiResponse.content[0]?.text.replace(/```json|```/g, "").trim() || "{}");
+      aiData = JSON.parse(replyText(aiResponse).replace(/```json|```/g, "").trim() || "{}");
     } catch(e) {
       aiData.summary = `Your business health score is ${totalScore}/100.`;
     }

@@ -840,7 +840,15 @@ async function sendTeamInviteEmail({ toEmail, ...opts }) {
   return safeSend({ to: toEmail, subject, html, text, strict: true });
 }
 
+// Plain operational alert to the founders (AI budget, credits ran out, ...)
+async function sendFounderAlert({ to, subject, text }) {
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!recipients.length) return null;
+  return safeSend({ to: recipients, subject, text, html: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap">${String(text).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</pre>`, strict: true });
+}
+
 module.exports = {
+  sendFounderAlert,
   initSendgrid,
   sendWelcomeEmail,
   sendVerifyEmail,

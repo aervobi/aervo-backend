@@ -174,6 +174,7 @@ module.exports = function founderRoutes(pool, authenticateToken) {
           accounts: (aiMonth[0] || {}).accounts || 0,
           byFeature: aiByFeature.map((r) => ({ feature: r.feature, cost: Math.round(r.cost * 10000) / 10000, calls: r.calls })),
           topAccounts: aiTop.map((r) => ({ userId: r.user_id, name: r.name, email: r.email, cost: Math.round(r.cost * 10000) / 10000, calls: r.calls })),
+          budget: require("../utils/aiBudget").status(),
         },
       });
     } catch (err) {

@@ -134,6 +134,18 @@ function aiQuota(pool) {
     try {
       const { plan, limits } = await planFor(pool, req.user.userId);
       const limit = limits.aiMessagesPerMonth;
+      // Spend guardrails (utils/aiBudget.js): checked before a message is counted
+      const b = require("./aiBudget").check({ userId: req.user.userId, tier: "chat" });
+      if (!b.ok && limit !== 0) {
+        return res.status(503).json({
+          success: false,
+          code: "AI_PAUSED",
+          message:
+            b.reason === "budget_account"
+              ? "You've asked Ask Aervo a lot today. It'll be ready for more questions tomorrow."
+              : "Ask Aervo is taking a short break. Please try again in a little while.",
+        });
+      }
       if (limit === Infinity || limit == null) return next();
       if (limit <= 0) {
         return res.status(403).json(

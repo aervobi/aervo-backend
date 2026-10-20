@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
+const { AI_MODEL, replyText } = require("../utils/aiModels");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -253,7 +254,7 @@ module.exports = (pool, authenticateToken) => {
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const aiResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: AI_MODEL,
       max_tokens: 800,
       messages: [{
         role: "user",
@@ -269,7 +270,7 @@ Generate exactly 6 actionable weekly priorities as a JSON array. No markdown, no
 
     let items = [];
     try {
-      const raw = aiResponse.content[0].text.replace(/```json|```/g, "").trim();
+      const raw = replyText(aiResponse).replace(/```json|```/g, "").trim();
       items = JSON.parse(raw);
     } catch (e) {
       // Fallback items if AI parsing fails

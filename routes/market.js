@@ -4,7 +4,7 @@
 //   PUT  /api/market/area       set it by ZIP (or city + state) and/or category
 //   GET  /api/market/snapshot   public data about the area (Census ACS) + an AI "local angle"   [marketSnapshot]
 //   GET  /api/market/forecast   7-day expected traffic: weather + paydays + holidays + own sales [demandForecast]
-//   GET  /api/market/briefing   "This week in <city>": AI briefing with web search + sources   [weeklyBriefing]
+//   GET  /api/market/briefing   Weekly Marketing Brief: AI research with web search + sources, once a week [weeklyBriefing]
 //                               (+ a "your week" item from the store's own forecast on Pro)
 //   GET  /api/market/competitors  nearby competitors + what their customers say (Google Places) [competitorRadar]
 //   GET  /api/market/trending     fastest-growing and new places nearby (weekly review-count snapshots) [trendingNearby]
@@ -24,6 +24,7 @@ const { requireFeature, effectivePlan } = require("../utils/planAccess");
 const { buildForecast } = require("../utils/demandForecast");
 const { generateBriefing } = require("../utils/marketBriefing");
 const { withAiContext } = require("../utils/aiSpend");
+const aiBudget = require("../utils/aiBudget");
 const { nearby, competitorTypes, reviewThemes, PlacesError, TRENDING_TYPES } = require("../utils/localCompetition");
 const { CHAT_MODEL, replyText } = require("../utils/aiModels");
 
@@ -109,6 +110,8 @@ module.exports = function marketRoutes(pool, authenticateToken, deps = {}) {
     await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS city TEXT`);
     await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS state TEXT`);
     await pool.query(`ALTER TABLE market_briefings ALTER COLUMN zip DROP NOT NULL`);
+    // Who asked for an on-demand brief (each account gets one new research run a week)
+    await pool.query(`ALTER TABLE market_briefings ADD COLUMN IF NOT EXISTS requested_by INTEGER`);
     await pool.query(`CREATE TABLE IF NOT EXISTS market_cache (
       key        TEXT PRIMARY KEY,
       data       JSONB NOT NULL,
@@ -563,24 +566,77 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
   // Returns the briefing row, starting a generation (in the background) when
   // there's none yet for this week, a stuck one, or an old failure. The claim
   // is one atomic statement, so two requests can't start the same briefing.
-  async function ensureBriefing(a, { wait = false } = {}) {
+  // The Weekly Marketing Brief is written once a week per city + business type:
+  //  - a brief stays current for FRESH_DAYS after it's written (so one made on a
+  //    Sunday isn't redone on Monday), and the Monday job refreshes briefs older
+  //    than MONDAY_REFRESH_DAYS
+  //  - outside the Monday job, each account can start at most ACCOUNT_RUNS_PER_WEEK
+  //    new research runs a week: its first brief plus one correction of area or
+  //    business type; further changes wait for Monday
+  const FRESH_DAYS = 7;
+  const ACCOUNT_RUNS_PER_WEEK = 2;
+  const MONDAY_REFRESH_DAYS = 6;
+
+  // The next Monday (YYYY-MM-DD) in the store's time zone: when the next brief arrives
+  function nextMonday(tz) {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: tz || "UTC" });
+    const d = new Date(today + "T12:00:00Z");
+    const ahead = (8 - d.getUTCDay()) % 7 || 7;
+    return new Date(d.getTime() + ahead * DAYS).toISOString().slice(0, 10);
+  }
+
+  async function latestReady(a) {
+    return (
+      await pool.query(
+        `SELECT key, status, data, week_start, updated_at FROM market_briefings
+          WHERE key LIKE $1 AND status = 'ready' ORDER BY updated_at DESC LIMIT 1`,
+        [`${cityKey(a)}:${a.category}:%`]
+      )
+    ).rows[0] || null;
+  }
+
+  // Returns { week, row, fallback, paused?, scheduled? }. `row` is the current
+  // brief (ready, preparing or failed); `fallback` is the latest earlier brief.
+  async function ensureBriefing(a, { wait = false, requestedBy = null, freshDays = FRESH_DAYS } = {}) {
     const week = weekOf(a.timezone);
+    const latest = await latestReady(a);
+    if (latest && Date.now() - new Date(latest.updated_at).getTime() < freshDays * DAYS) {
+      return { week, row: latest, fallback: null };
+    }
     const key = briefingKey(a, week);
+    const current = (await pool.query(`SELECT status, data, updated_at FROM market_briefings WHERE key = $1`, [key])).rows[0] || null;
+    if (current && current.status === "preparing") return { week, row: current, fallback: latest };
+
+    // Spend guardrails: when background AI is paused, don't start new research
+    if (!aiBudget.check({ tier: "background" }).ok) return { week, row: null, fallback: latest, paused: true };
+
+    // Limited new research runs per account per week, outside the Monday job
+    if (requestedBy) {
+      const used = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM market_briefings WHERE requested_by = $1 AND created_at > NOW() - interval '7 days' AND key <> $2`,
+        [requestedBy, key]
+      );
+      if (used.rows[0].n >= ACCOUNT_RUNS_PER_WEEK) {
+        return { week, row: current && current.status === "ready" ? current : null, fallback: latest, scheduled: true };
+      }
+    }
+
     const claimed = await pool.query(
-      `INSERT INTO market_briefings (key, zip, category, week_start, status, city, state)
-       VALUES ($1, $2, $3, $4, 'preparing', $7, $8)
+      `INSERT INTO market_briefings (key, zip, category, week_start, status, city, state, requested_by)
+       VALUES ($1, $2, $3, $4, 'preparing', $7, $8, $9)
        ON CONFLICT (key) DO UPDATE SET status = 'preparing', error = NULL, updated_at = NOW()
          WHERE (market_briefings.status = 'preparing' AND market_briefings.updated_at < NOW() - ($5 || ' milliseconds')::interval)
             OR (market_briefings.status = 'failed' AND market_briefings.updated_at < NOW() - ($6 || ' milliseconds')::interval)
+            OR (market_briefings.status = 'ready' AND market_briefings.updated_at < NOW() - ($10 || ' days')::interval)
        RETURNING key`,
-      [key, a.zip || null, a.category, week.start, String(PREPARING_TIMEOUT_MS), String(FAILED_RETRY_MS), a.city, a.state]
+      [key, a.zip || null, a.category, week.start, String(PREPARING_TIMEOUT_MS), String(FAILED_RETRY_MS), a.city, a.state, requestedBy, String(freshDays)]
     );
     if (claimed.rows.length) {
       const job = runGeneration(key, a, week);
       if (wait) await job;
     }
     const row = (await pool.query(`SELECT status, data, updated_at FROM market_briefings WHERE key = $1`, [key])).rows[0];
-    return { week, row };
+    return { week, row, fallback: latest };
   }
 
   // The store's own week, from its forecast: the busiest and slowest days ahead
@@ -610,10 +666,14 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     try {
       const a = await areaFor(req.user.userId);
       if (!a) return res.json({ success: true, needsSetup: true });
-      if (!a.city || !a.state) return res.json({ success: true, area: publicArea(a), unavailable: "Add your store's ZIP code to get a weekly briefing." });
-      if (!anthropic) return res.json({ success: true, area: publicArea(a), unavailable: "Weekly briefings are being set up. Check back soon." });
+      if (!a.city || !a.state) return res.json({ success: true, area: publicArea(a), unavailable: "Add your store's ZIP code to get your Weekly Marketing Brief." });
+      if (!anthropic) return res.json({ success: true, area: publicArea(a), unavailable: "Your Weekly Marketing Brief is being set up. Check back soon." });
 
-      const { week, row } = await ensureBriefing(a);
+      const { week, row, fallback, paused, scheduled } = await ensureBriefing(a, { requestedBy: req.user.userId });
+      const ready = row && row.status === "ready" ? row : null;
+      // Not ready yet: keep showing the latest earlier brief, labelled with its week
+      const shown = ready || fallback;
+      const status = ready ? "ready" : paused ? "paused" : scheduled ? "scheduled" : row ? row.status : "preparing";
       let yours = null;
       if (req.planLimits && req.planLimits.demandForecast) {
         yours = await forecastFor(req.user.userId, a).then(yourWeekItem).catch(() => null);
@@ -622,13 +682,16 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
         success: true,
         area: publicArea(a),
         week,
-        status: row ? row.status : "preparing",
-        briefing: row && row.status === "ready" ? row.data : null,
+        status,
+        briefing: shown ? shown.data : null,
+        briefWeek: shown ? new Date(shown.week_start).toISOString().slice(0, 10) : null,
+        staleWeek: !ready && shown ? new Date(shown.week_start).toISOString().slice(0, 10) : null,
+        nextBriefing: nextMonday(a.timezone),
         yourWeek: yours,
       });
     } catch (err) {
       console.error("Market briefing error:", err.message);
-      res.status(500).json({ success: false, message: "Couldn't load this week's briefing." });
+      res.status(500).json({ success: false, message: "Couldn't load your Weekly Marketing Brief." });
     }
   });
 
@@ -856,7 +919,7 @@ Write the "local angle": 2 or 3 short sentences an owner can act on, about what 
     const stats = { areas: areas.length, ready: 0, failed: 0 };
     if (!anthropic) return stats;
     for (const a of areas) {
-      const { row } = await ensureBriefing(a, { wait: true });
+      const { row } = await ensureBriefing(a, { wait: true, freshDays: MONDAY_REFRESH_DAYS });
       if (row && row.status === "ready") stats.ready++;
       else stats.failed++;
       if (pauseMs) await new Promise((r) => setTimeout(r, pauseMs));

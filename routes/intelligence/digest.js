@@ -11,6 +11,7 @@
 
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
+const { AI_MODEL, replyText } = require("../../utils/aiModels");
 
 function round2(n) {
   return Math.round(n * 100) / 100;
@@ -76,12 +77,12 @@ module.exports = function (pool, authenticateToken) {
     const prompt = buildPrompt(current, currentTotals, prior, priorTotals);
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: AI_MODEL,
       max_tokens: 600,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const parsed = parseJsonResponse(response.content[0].text);
+    const parsed = parseJsonResponse(replyText(response));
     const body = parsed.bullets.map((b) => `- ${b}`).join('\n');
 
     await pool.query(
