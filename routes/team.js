@@ -110,8 +110,23 @@ async function membershipOf(db, userId, { lock = false } = {}) {
   const m = r.rows[0];
   if (!m) return null;
   m.owner_plan = effectivePlan(m.owner_row).plan; // an owner on trial counts as Pro
+  m.store = storeOf(m.owner_row, m.name);
   delete m.owner_row;
   return m;
+}
+
+// The business the team works for, from the owner's account (shown to staff so
+// they can see whose store they're connected to)
+function storeOf(owner, teamName) {
+  const o = owner || {};
+  const logo = typeof o.company_logo_url === "string" && /^https:\/\//.test(o.company_logo_url) ? o.company_logo_url : null;
+  return {
+    name: o.company_name || teamName,
+    logoUrl: logo,
+    location: o.location || null,
+    businessType: o.business_type || null,
+    ownerName: o.name || o.company_name || null,
+  };
 }
 
 // Members plus open (not expired) invites
@@ -125,14 +140,26 @@ async function seatsUsed(db, teamId) {
   return Number(r.rows[0].used);
 }
 
-// For /api/user/me: { id, name, role } or null. Never throws.
+// For /api/user/me: { id, name, role, store } or null. Never throws.
 async function teamSummaryFor(pool, userId) {
   try {
     const m = await membershipOf(pool, userId);
-    return m ? { id: m.team_id, name: m.name, role: m.role } : null;
+    return m ? { id: m.team_id, name: m.name, role: m.role, store: m.store } : null;
   } catch {
     return null;
   }
+}
+
+// When the caller joined and who invited them (for the staff home page)
+async function joinInfo(db, teamId, userId) {
+  const r = await db.query(
+    `SELECT tm.joined_at, COALESCE(NULLIF(u.name, ''), u.company_name) AS invited_by_name
+       FROM team_members tm LEFT JOIN users u ON u.id = tm.invited_by
+      WHERE tm.team_id = $1 AND tm.user_id = $2`,
+    [teamId, userId]
+  );
+  const row = r.rows[0] || {};
+  return { joinedAt: row.joined_at || null, invitedBy: row.invited_by_name || null };
 }
 
 async function withTransaction(pool, fn) {
@@ -287,11 +314,12 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
         team: {
           id: m.team_id,
           name: m.name,
+          store: m.store,
           createdAt: m.created_at,
           plan: m.owner_plan,
           seats: { used: await seatsUsed(pool, m.team_id), limit: seatLimit(m.owner_plan) },
         },
-        me: { userId, role: m.role },
+        me: { userId, role: m.role, ...(await joinInfo(pool, m.team_id, userId)) },
         permissions: perms,
         members,
         invites,

@@ -114,7 +114,7 @@ module.exports = (pool, authenticateToken) => {
     isFounder:      isFounder(user),
     squareMerchantId: user.square_merchant_id,
   },
-  team, // { id, name, role } or null
+  team, // { id, name, role, store: { name, logoUrl, location, ... } } or null
   // What the plan includes, for showing locked/upgrade states. The server
   // enforces these itself; this is only so pages can explain them.
   // (null = unlimited)
