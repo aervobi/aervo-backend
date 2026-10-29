@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
 const { AI_MODEL, replyText } = require("../utils/aiModels");
+const { getValidShopifyToken, shopifyFetch } = require("../utils/shopifyToken");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -47,14 +48,15 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
       // ── SHOPIFY ──────────────────────────────────────────────
       platform = "shopify";
       const storeResult = await pool.query(
-        `SELECT access_token FROM connected_stores 
+        `SELECT store_origin FROM connected_stores
          WHERE user_id = $1 AND store_origin = $2 AND is_active = true`,
         [req.user.userId, shopOrigin]
       );
       if (storeResult.rows.length === 0) {
         return res.status(404).json({ success: false, message: "Store not found" });
       }
-      const accessToken = storeResult.rows[0].access_token;
+      // The token lives on shops (connected_stores never stored one for Shopify)
+      const accessToken = await getValidShopifyToken(pool, shopOrigin);
       const shopDomain = `https://${shopOrigin}`;
       const now = new Date();
       const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -62,9 +64,9 @@ router.post("/api/health-score/calculate", authenticateToken, async (req, res) =
       const headers = { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json" };
 
       const [currentRes, prevRes, invRes] = await Promise.all([
-        fetch(`${shopDomain}/admin/api/2024-01/orders.json?status=any&created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
-        fetch(`${shopDomain}/admin/api/2024-01/orders.json?status=any&created_at_min=${sixtyDaysAgo}&created_at_max=${thirtyDaysAgo}&limit=250`, { headers }),
-        fetch(`${shopDomain}/admin/api/2024-01/products.json?limit=250`, { headers })
+        shopifyFetch(pool, shopOrigin, `${shopDomain}/admin/api/2024-01/orders.json?status=any&created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
+        shopifyFetch(pool, shopOrigin, `${shopDomain}/admin/api/2024-01/orders.json?status=any&created_at_min=${sixtyDaysAgo}&created_at_max=${thirtyDaysAgo}&limit=250`, { headers }),
+        shopifyFetch(pool, shopOrigin, `${shopDomain}/admin/api/2024-01/products.json?limit=250`, { headers })
       ]);
 
       const [currentData, prevData, invData] = await Promise.all([currentRes.json(), prevRes.json(), invRes.json()]);

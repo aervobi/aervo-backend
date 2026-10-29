@@ -2,18 +2,19 @@ const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
 const { AI_MODEL, replyText } = require("../utils/aiModels");
+const { getValidShopifyToken, shopifyFetch } = require("../utils/shopifyToken");
 
 module.exports = (pool, authenticateToken) => {
 
   // ── Helper: get shop access token ──────────────────────────
   async function getShopToken(shopOrigin, userId) {
     const result = await pool.query(
-      `SELECT access_token FROM shops 
+      `SELECT shop_origin FROM shops
        WHERE shop_origin = $1 AND (user_id = $2 OR user_id IS NULL)`,
       [shopOrigin, userId]
     );
     if (result.rows.length === 0) throw new Error("Shop not found or access denied");
-    return result.rows[0].access_token;
+    return getValidShopifyToken(pool, shopOrigin);
   }
 
   // ── POST /api/reports/generate ──────────────────────────────
@@ -48,7 +49,7 @@ module.exports = (pool, authenticateToken) => {
       let aiPrompt = "";
 
       if (reportType === "revenue") {
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );
@@ -98,7 +99,7 @@ Daily breakdown: ${JSON.stringify(Object.values(daily).slice(-7))}
 Write a 3-4 sentence business insight paragraph. Be specific, actionable, and conversational. Mention trends, highlight wins or concerns, and suggest one concrete action.`;
 
       } else if (reportType === "orders") {
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );
@@ -144,7 +145,7 @@ Average Order Value: $${avgOrderValue.toFixed(2)}
 Write a 3-4 sentence business insight paragraph. Be specific and actionable.`;
 
       } else if (reportType === "refunds") {
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );
@@ -186,7 +187,7 @@ Total Revenue: $${totalRevenue.toFixed(2)}
 Write a 3-4 sentence business insight paragraph about the refund situation. Be specific and actionable. If refund rate is high, suggest investigation. If low, acknowledge it.`;
 
       } else if (reportType === "inventory") {
-        const productsRes = await fetch(`${base}/products.json?limit=250`, { headers: h });
+        const productsRes = await shopifyFetch(pool, shopOrigin, `${base}/products.json?limit=250`, { headers: h });
         const products = (await productsRes.json()).products || [];
         const variants = products.flatMap(p => p.variants.map(v => ({ ...v, productTitle: p.title })));
         const outOfStock = variants.filter(v => (v.inventory_quantity || 0) === 0);
@@ -228,9 +229,9 @@ Out of Stock Items: ${outOfStock.slice(0, 5).map(v => v.productTitle).join(", ")
 Write a 3-4 sentence business insight paragraph. Highlight urgency for out of stock items, flag low stock risks, and suggest reorder strategy.`;
 
       } else if (reportType === "customers") {
-        const customersRes = await fetch(`${base}/customers.json?limit=250`, { headers: h });
+        const customersRes = await shopifyFetch(pool, shopOrigin, `${base}/customers.json?limit=250`, { headers: h });
         const customers = (await customersRes.json()).customers || [];
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );
@@ -275,7 +276,7 @@ Average Lifetime Value: $${avgLifetimeValue.toFixed(2)}
 Write a 3-4 sentence business insight paragraph. Focus on customer retention, acquisition trends, and one actionable recommendation.`;
 
       } else if (reportType === "products") {
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );
@@ -322,7 +323,7 @@ Total Products Sold: ${Object.keys(productSales).length}
 Write a 3-4 sentence business insight paragraph. Highlight what's working, what's underperforming, and one specific recommendation.`;
 
       } else if (reportType === "pnl") {
-        const ordersRes = await fetch(
+        const ordersRes = await shopifyFetch(pool, shopOrigin,
           `${base}/orders.json?status=any&limit=250&created_at_min=${startISO}`,
           { headers: h }
         );

@@ -282,6 +282,7 @@ app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }))
 
 const unifiedRoutes = require("./routes/unified");
 const { requireFeature, aiQuota, planFor, historyStart } = require("./utils/planAccess");
+const { getValidShopifyToken, shopifyFetch } = require("./utils/shopifyToken");
 // One customer view across Shopify + Square: Pro and Business
 app.use("/api/unified", authenticateToken, requireFeature(pool, "unifiedView"), unifiedRoutes);
 
@@ -494,9 +495,11 @@ app.post(
 );
 
 // ============= HELPER: GET SHOP TOKEN (user-scoped) =============
+// Ownership check here; the token itself (refreshed when needed) comes from
+// utils/shopifyToken.js.
 async function getShopToken(shop, userId) {
   const result = await pool.query(
-    `SELECT access_token FROM shops 
+    `SELECT shop_origin FROM shops
      WHERE shop_origin = $1 AND user_id = $2`,
     [shop, userId]
   );
@@ -505,7 +508,7 @@ async function getShopToken(shop, userId) {
     throw new Error("Shop not found or access denied");
   }
 
-  return result.rows[0].access_token;
+  return getValidShopifyToken(pool, shop);
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -677,14 +680,14 @@ app.get("/api/shopify/overview", authenticateToken, async (req, res) => {
     const { limits } = await planFor(pool, req.user.userId);
     const overviewDays = Math.min(30, limits.dataHistoryDays || 30);
     const [ordersResp, productsResp, customersResp] = await Promise.all([
-      fetch(
+      shopifyFetch(pool, shop,
         `${baseUrl}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(overviewDays)}`,
         { headers: { "X-Shopify-Access-Token": accessToken } }
       ),
-      fetch(`${baseUrl}/products.json?limit=250`, {
+      shopifyFetch(pool, shop, `${baseUrl}/products.json?limit=250`, {
         headers: { "X-Shopify-Access-Token": accessToken },
       }),
-      fetch(`${baseUrl}/customers.json?limit=250`, {
+      shopifyFetch(pool, shop, `${baseUrl}/customers.json?limit=250`, {
         headers: { "X-Shopify-Access-Token": accessToken },
       }),
     ]);
@@ -759,7 +762,7 @@ app.get("/api/shopify/orders", authenticateToken, async (req, res) => {
 
     // Only as far back as the plan's data history
     const since = historyStart((await planFor(pool, req.user.userId)).limits);
-    const response = await fetch(
+    const response = await shopifyFetch(pool, shop,
       `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=${limit}&order=created_at+DESC` +
         (since ? `&created_at_min=${since.toISOString()}` : ""),
       { headers: { "X-Shopify-Access-Token": accessToken } }
@@ -783,7 +786,7 @@ app.get("/api/shopify/inventory", authenticateToken, async (req, res) => {
     const accessToken = await getShopToken(shop, req.user.userId);
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
 
-    const response = await fetch(
+    const response = await shopifyFetch(pool, shop,
       `https://${shop}/admin/api/${apiVersion}/products.json?limit=250`,
       { headers: { "X-Shopify-Access-Token": accessToken } }
     );
@@ -842,7 +845,7 @@ app.get("/api/shopify/customers", authenticateToken, async (req, res) => {
     const accessToken = await getShopToken(shop, req.user.userId);
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
 
-    const response = await fetch(
+    const response = await shopifyFetch(pool, shop,
       `https://${shop}/admin/api/${apiVersion}/customers.json?limit=250`,
       { headers: { "X-Shopify-Access-Token": accessToken } }
     );
@@ -892,7 +895,7 @@ app.get("/api/shopify/analytics", authenticateToken, async (req, res) => {
     const accessToken = await getShopToken(shop, req.user.userId);
     const apiVersion = process.env.SHOPIFY_API_VERSION || "2024-01";
 
-    const response = await fetch(
+    const response = await shopifyFetch(pool, shop,
       `https://${shop}/admin/api/${apiVersion}/orders.json?status=any&limit=250&created_at_min=${getDateDaysAgo(
         days
       )}`,
@@ -959,11 +962,11 @@ app.post("/api/ai/chat", authenticateToken, async (req, res) => {
       since.setDate(since.getDate() - 180);
 
       const [ordersRes, productsRes, customersRes] = await Promise.all([
-        fetch(`${base}/orders.json?status=any&limit=250&created_at_min=${since.toISOString()}`, {
+        shopifyFetch(pool, shopOrigin, `${base}/orders.json?status=any&limit=250&created_at_min=${since.toISOString()}`, {
           headers: h,
         }),
-        fetch(`${base}/products.json?limit=250`, { headers: h }),
-        fetch(`${base}/customers.json?limit=250`, { headers: h }),
+        shopifyFetch(pool, shopOrigin, `${base}/products.json?limit=250`, { headers: h }),
+        shopifyFetch(pool, shopOrigin, `${base}/customers.json?limit=250`, { headers: h }),
       ]);
 
       const orders = (await ordersRes.json()).orders || [];
@@ -1366,7 +1369,7 @@ async function registerComplianceWebhooks(shop, accessToken) {
 
   for (const wh of webhooks) {
     try {
-      const response = await fetch(`https://${shop}/admin/api/${apiVersion}/webhooks.json`, {
+      const response = await shopifyFetch(pool, shop, `https://${shop}/admin/api/${apiVersion}/webhooks.json`, {
         method: "POST",
         headers: {
           "X-Shopify-Access-Token": accessToken,
@@ -1385,9 +1388,16 @@ async function registerComplianceWebhooks(shop, accessToken) {
 // Call this after OAuth completes for each shop
 async function registerWebhooksForAllShops() {
   try {
-    const result = await pool.query("SELECT shop_origin, access_token FROM shops");
+    const result = await pool.query(
+      "SELECT shop_origin FROM shops WHERE shopify_needs_reconnect = false"
+    );
     for (const row of result.rows) {
-      await registerComplianceWebhooks(row.shop_origin, row.access_token);
+      try {
+        const accessToken = await getValidShopifyToken(pool, row.shop_origin);
+        await registerComplianceWebhooks(row.shop_origin, accessToken);
+      } catch (err) {
+        console.error(`Skipped webhook registration for ${row.shop_origin}:`, err.message);
+      }
     }
   } catch (err) {
     console.error("Failed to register webhooks for shops:", err);

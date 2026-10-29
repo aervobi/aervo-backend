@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Anthropic = require("@anthropic-ai/sdk");
 const { AI_MODEL, replyText } = require("../utils/aiModels");
+const { getValidShopifyToken, shopifyFetch } = require("../utils/shopifyToken");
 
 module.exports = (pool, authenticateToken) => {
 
@@ -66,7 +67,11 @@ module.exports = (pool, authenticateToken) => {
 
         try {
           if (store.shop_origin && store.integration_name !== "square") {
-            storeMetrics = await fetchShopifyMetrics(store.shop_origin, store.access_token);
+            // The token lives on shops (connected_stores never stored one for Shopify)
+            storeMetrics = await fetchShopifyMetrics(
+              store.shop_origin,
+              await getValidShopifyToken(pool, store.shop_origin)
+            );
           } else if (store.integration_name === "square") {
             storeMetrics = await fetchSquareMetrics(store.access_token);
           }
@@ -303,8 +308,8 @@ Generate exactly 6 actionable weekly priorities as a JSON array. No markdown, no
     const headers = { "X-Shopify-Access-Token": accessToken };
 
     const [ordersRes, customersRes] = await Promise.all([
-      fetch(`https://${shopOrigin}/admin/api/2024-01/orders.json?status=any&created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
-      fetch(`https://${shopOrigin}/admin/api/2024-01/customers.json?created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
+      shopifyFetch(pool, shopOrigin, `https://${shopOrigin}/admin/api/2024-01/orders.json?status=any&created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
+      shopifyFetch(pool, shopOrigin, `https://${shopOrigin}/admin/api/2024-01/customers.json?created_at_min=${thirtyDaysAgo}&limit=250`, { headers }),
     ]);
 
     const [ordersData, customersData] = await Promise.all([ordersRes.json(), customersRes.json()]);

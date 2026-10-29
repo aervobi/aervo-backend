@@ -12,6 +12,7 @@ const {
 } = require("../middleware/auth");
 const { requiresSecondFactor } = require("./twoFactor");
 const { checkSourceLimit, planFor } = require("../utils/planAccess");
+const { getValidShopifyToken, shopifyFetch, tokenColumns } = require("../utils/shopifyToken");
 
 module.exports = function (pool, opts = {}) {
   const router = express.Router();
@@ -348,15 +349,16 @@ module.exports = function (pool, opts = {}) {
         [shop, state]
       );
 
-      // Exchange code for access token
+      // Exchange code for an expiring offline token (60 min) + refresh token (~90 days)
       const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
           client_id: SHOPIFY_API_KEY,
           client_secret: SHOPIFY_API_SECRET,
           code,
-        }),
+          expiring: "1",
+        }).toString(),
       });
 
       const tokenText = await tokenResponse.text();
@@ -365,22 +367,34 @@ module.exports = function (pool, opts = {}) {
         return res.status(500).send("Failed to exchange OAuth code.");
       }
 
-      const { access_token, scope } = JSON.parse(tokenText);
+      const tokenData = JSON.parse(tokenText);
+      const { access_token, scope } = tokenData;
       if (!access_token) {
         console.error("Token exchange response missing access_token");
         return res.status(500).send("OAuth token missing.");
       }
+      if (!tokenData.refresh_token) {
+        console.warn(`Token exchange for ${shop} returned no refresh_token (non-expiring token)`);
+      }
 
-      // Save shop once (user_id is set below, never by this upsert)
+      // Save shop once (user_id is set below, never by this upsert).
+      // Tokens are stored encrypted; see utils/shopifyToken.js.
+      const t = tokenColumns(tokenData);
       await pool.query(
-        `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at)
-         VALUES ($1::text, $2::text, $3::text, $1::text, NOW())
+        `INSERT INTO shops (shop_origin, access_token, scope, store_name, installed_at,
+                            shopify_refresh_token, shopify_token_expires_at,
+                            shopify_refresh_token_expires_at, shopify_needs_reconnect)
+         VALUES ($1::text, $2::text, $3::text, $1::text, NOW(), $4, $5, $6, false)
          ON CONFLICT (shop_origin)
          DO UPDATE SET
-           access_token = EXCLUDED.access_token,
-           scope        = EXCLUDED.scope,
-           installed_at = NOW()`,
-        [shop, access_token, scope || null]
+           access_token                     = EXCLUDED.access_token,
+           scope                            = EXCLUDED.scope,
+           installed_at                     = NOW(),
+           shopify_refresh_token            = EXCLUDED.shopify_refresh_token,
+           shopify_token_expires_at         = EXCLUDED.shopify_token_expires_at,
+           shopify_refresh_token_expires_at = EXCLUDED.shopify_refresh_token_expires_at,
+           shopify_needs_reconnect          = false`,
+        [shop, t.accessToken, scope || null, t.refreshToken, t.expiresAt, t.refreshExpiresAt]
       );
 
       // Mandatory compliance webhooks + app/uninstalled
@@ -512,16 +526,20 @@ module.exports = function (pool, opts = {}) {
   const BILLING_TEST = process.env.SHOPIFY_BILLING_TEST !== "false";
 
   async function getShopAccessToken(shop) {
-    const result = await pool.query("SELECT access_token FROM shops WHERE shop_origin = $1", [shop]);
-    return result.rows[0]?.access_token || null;
+    try {
+      return await getValidShopifyToken(pool, shop, { fetchImpl: fetch });
+    } catch (err) {
+      if (err.code === "SHOPIFY_NOT_CONNECTED" || err.code === "SHOPIFY_RECONNECT_REQUIRED") return null;
+      throw err;
+    }
   }
 
   async function shopGraphql(shop, accessToken, query, variables) {
-    const r = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    const r = await shopifyFetch(pool, shop, `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
       method: "POST",
       headers: { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json" },
       body: JSON.stringify({ query, variables }),
-    });
+    }, fetch);
     return r.json();
   }
 
@@ -549,13 +567,17 @@ module.exports = function (pool, opts = {}) {
       if (owned.rows.length === 0 || !owned.rows[0].access_token) {
         return res.status(403).json({ success: false, message: "Shop not connected to this account" });
       }
+      const accessToken = await getShopAccessToken(shop);
+      if (!accessToken) {
+        return res.status(409).json({ success: false, message: "Reconnect Shopify in Integrations to continue" });
+      }
       // Choosing Pro during the in-app trial keeps the days that are left
       const { trial } = await planFor(pool, req.user.userId);
       const trialDays = planKey === "pro" && trial ? trial.daysLeft : 0;
 
       const data = await shopGraphql(
         shop,
-        owned.rows[0].access_token,
+        accessToken,
         `mutation AppSubscriptionCreate($name: String!, $returnUrl: URL!, $test: Boolean!, $trialDays: Int, $lineItems: [AppSubscriptionLineItemInput!]!) {
            appSubscriptionCreate(name: $name, returnUrl: $returnUrl, test: $test, trialDays: $trialDays, lineItems: $lineItems) {
              appSubscription { id status }

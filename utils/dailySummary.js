@@ -8,6 +8,7 @@
 // Every query is scoped to the account's own id. Amounts: Square stores cents,
 // IMS and Shopify are dollars.
 const { dayRange, localDate, addDays } = require("./tzdate");
+const { getValidShopifyToken, shopifyFetch } = require("./shopifyToken");
 
 const FRONTEND = () => process.env.FRONTEND_BASE_URL || "https://aervoapp.com";
 const SHOPIFY_VERSION = () => process.env.SHOPIFY_API_VERSION || "2024-01";
@@ -253,7 +254,7 @@ async function collectShopify(pool, userId, ranges, prefs, fetchImpl) {
   const f = fetchImpl || fetch;
   const shop = (
     await pool.query(
-      `SELECT shop_origin, access_token FROM shops
+      `SELECT shop_origin FROM shops
        WHERE user_id = $1 AND access_token IS NOT NULL ORDER BY installed_at DESC NULLS LAST LIMIT 1`,
       [userId]
     )
@@ -261,10 +262,19 @@ async function collectShopify(pool, userId, ranges, prefs, fetchImpl) {
   if (!shop) return null;
 
   const base = `https://${shop.shop_origin}/admin/api/${SHOPIFY_VERSION()}`;
-  const headers = { "X-Shopify-Access-Token": shop.access_token };
   const src = { key: "shopify", label: "Shopify", name: shop.shop_origin.replace(".myshopify.com", ""), href: `${FRONTEND()}/dashboard/shopify` };
+  const reconnect = { ...src, ok: false, error: "Aervo can't reach this store anymore. Reconnect Shopify in Integrations." };
 
   try {
+    let accessToken;
+    try {
+      accessToken = await getValidShopifyToken(pool, shop.shop_origin, { fetchImpl: f });
+    } catch (err) {
+      if (err.code === "SHOPIFY_RECONNECT_REQUIRED") return reconnect;
+      throw err;
+    }
+    const headers = { "X-Shopify-Access-Token": accessToken };
+    const sf = (url, opts) => shopifyFetch(pool, shop.shop_origin, url, opts, f);
     const q = new URLSearchParams({
       status: "any",
       limit: "250",
@@ -272,12 +282,10 @@ async function collectShopify(pool, userId, ranges, prefs, fetchImpl) {
       created_at_max: ranges.yesterday.end.toISOString(),
     });
     const [oRes, pRes] = await Promise.all([
-      f(`${base}/orders.json?${q}`, { headers, signal: AbortSignal.timeout(20000) }),
-      f(`${base}/products.json?limit=250&fields=title,variants`, { headers, signal: AbortSignal.timeout(20000) }),
+      sf(`${base}/orders.json?${q}`, { headers, signal: AbortSignal.timeout(20000) }),
+      sf(`${base}/products.json?limit=250&fields=title,variants`, { headers, signal: AbortSignal.timeout(20000) }),
     ]);
-    if (oRes.status === 401 || oRes.status === 403) {
-      return { ...src, ok: false, error: "Aervo can't reach this store anymore. Reconnect Shopify in Integrations." };
-    }
+    if (oRes.status === 401 || oRes.status === 403) return reconnect;
     if (!oRes.ok) throw new Error(`orders ${oRes.status}`);
 
     const orders = ((await oRes.json()).orders || []).filter((o) => !o.cancelled_at);
