@@ -31,7 +31,7 @@ _Last reviewed: 2026-10-17 (repricing, trial + Lite, fair-use caps, AI spend tra
 | Customer segments | No | Yes | Yes | Yes | Square `/customers/enriched` drops segments |
 | Google Reviews | No | Yes | Yes | Yes | `/api/google-reviews` (`requirePlan`) |
 | Unified customer view (API) | No | No | Yes | Yes | `/api/unified/*` |
-| Team seats | 0 | 0 | 10 | 50 | Team invites (`routes/team.js`) |
+| Team seats | 0 | 0 | 10 | 50 | Team invites (`routes/team.js`); team messaging (`routes/messages.js`) sends only while the owner's plan has seats, reading always works |
 | Local market snapshot (Census + AI local angle) | No | Yes | Yes | Yes | `/api/market/snapshot` (`marketSnapshot`) |
 | 7-day demand forecast | No | No | Yes | Yes | `/api/market/forecast` (`demandForecast`) |
 | Weekly Marketing Brief (web search, cited; once a week, new every Monday) | No | Yes | Yes | Yes | `/api/market/briefing` (`weeklyBriefing`); Pro also gets a "your week" item from its forecast |

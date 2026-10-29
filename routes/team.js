@@ -662,5 +662,6 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
 
 module.exports.ensureTeamTables = ensureTeamTables;
 module.exports.teamSummaryFor = teamSummaryFor;
+module.exports.membershipOf = membershipOf;
 module.exports.permissionsFor = permissionsFor;
 module.exports.__test = { sends, hashToken };

@@ -280,6 +280,9 @@ app.use("/", require("./routes/founder")(pool, authenticateToken));
 // Teams: members, roles and invites (Pro/Business)
 app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }));
 
+// Team messaging (DMs, group chats, live updates) — routes/messages.js
+app.use("/", require("./routes/messages")(pool, authenticateToken));
+
 const unifiedRoutes = require("./routes/unified");
 const { requireFeature, aiQuota, planFor, historyStart } = require("./utils/planAccess");
 const { getValidShopifyToken, shopifyFetch } = require("./utils/shopifyToken");
