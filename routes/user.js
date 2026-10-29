@@ -287,6 +287,20 @@ module.exports = (pool, authenticateToken) => {
     try {
       const userId = req.user.userId;
 
+      // A company account (made through a team invite) belongs to the business:
+      // the owner or a supervisor removes it from Team management
+      const managed = await pool.query(
+        `SELECT t.name FROM users u JOIN teams t ON t.id = u.managed_by_team WHERE u.id = $1`,
+        [userId]
+      ).catch(() => ({ rows: [] }));
+      if (managed.rows[0]) {
+        return res.status(403).json({
+          success: false,
+          code: "MANAGED_ACCOUNT",
+          message: `Your account is managed by ${managed.rows[0].name}. Ask the owner or a supervisor to remove it.`,
+        });
+      }
+
       // Delete avatar from Cloudinary if exists
       const userResult = await pool.query("SELECT avatar_url FROM users WHERE id = $1", [userId]);
       if (userResult.rows[0]?.avatar_url?.includes("cloudinary.com/aervo")) {

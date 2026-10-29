@@ -9,6 +9,12 @@
 //  - Seats come from the OWNER's plan (config/plans.js teamSeats). Members plus
 //    pending invites count, so you can't send more invites than you have seats.
 //    A downgraded owner keeps their team but can't invite anyone new.
+//  - Company accounts: an account made on the join page (users.managed_by_team)
+//    belongs to the business. Its owner can't leave the team or delete the
+//    account; the owner or a supervisor removes them, and removing them deletes
+//    the account (it has nothing of its own). People who already had an Aervo
+//    account when they joined keep it: they can leave, and removal only takes
+//    them off the team.
 //  - Invites are emailed links (/team/join#t=TOKEN; the token sits in the hash so
 //    it never reaches a server log or Referer). Only a SHA-256 of the token is
 //    stored. A link works once, for 7 days, and only for the invited email address:
@@ -20,7 +26,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const PLANS = require("../config/plans");
 const { planFor, effectivePlan } = require("../utils/planAccess");
-const { startSession } = require("../middleware/auth");
+const { startSession, revokeSessions } = require("../middleware/auth");
 
 const ROLES = ["owner", "supervisor", "member"];
 const INVITE_DAYS = 7;
@@ -89,6 +95,15 @@ async function ensureTeamTables(pool) {
       accepted_by  INTEGER,
       revoked_at   TIMESTAMPTZ
     )`);
+  // Accounts the business created through an invite (see the header)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_by_team INTEGER`);
+  // Accounts made on the join page before the column existed: they were created
+  // with role 'Team member' and have no store of their own
+  await pool.query(`
+    UPDATE users u SET managed_by_team = tm.team_id
+      FROM team_members tm
+     WHERE tm.user_id = u.id AND tm.role <> 'owner' AND u.managed_by_team IS NULL
+       AND u.role = 'Team member' AND u.platform IS NULL`);
   // one open invite per address per team
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS team_invites_open_email
@@ -140,11 +155,13 @@ async function seatsUsed(db, teamId) {
   return Number(r.rows[0].used);
 }
 
-// For /api/user/me: { id, name, role, store } or null. Never throws.
+// For /api/user/me: { id, name, role, store, managed } or null. Never throws.
 async function teamSummaryFor(pool, userId) {
   try {
     const m = await membershipOf(pool, userId);
-    return m ? { id: m.team_id, name: m.name, role: m.role, store: m.store } : null;
+    if (!m) return null;
+    // managed = a company account: it can't leave the team or delete itself
+    return { id: m.team_id, name: m.name, role: m.role, store: m.store, managed: await isManaged(pool, userId) };
   } catch {
     return null;
   }
@@ -176,6 +193,21 @@ async function withTransaction(pool, fn) {
     client.release();
   }
 }
+
+// Deletes an account the business created (no stores of its own). Runs outside
+// a transaction because the optional tables may not exist.
+async function deleteManagedAccount(db, userId, teamId) {
+  const r = await db.query(`SELECT 1 FROM users WHERE id = $1 AND managed_by_team = $2`, [userId, teamId]);
+  if (!r.rows.length) return false;
+  await db.query("DELETE FROM connected_stores WHERE user_id = $1", [userId]).catch(() => {});
+  await db.query("DELETE FROM alert_preferences WHERE user_id = $1", [userId]).catch(() => {});
+  await db.query("DELETE FROM alerts_log WHERE user_id = $1", [userId]).catch(() => {});
+  await db.query("DELETE FROM users WHERE id = $1 AND managed_by_team = $2", [userId, teamId]);
+  return true;
+}
+
+const isManaged = async (db, userId) =>
+  !!(await db.query(`SELECT managed_by_team FROM users WHERE id = $1`, [userId])).rows[0]?.managed_by_team;
 
 // Thrown inside handlers to send a specific status + message
 class HttpError extends Error {
@@ -273,7 +305,7 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
       const members = (
         await pool.query(
           `SELECT u.id, COALESCE(NULLIF(u.name, ''), u.company_name, u.email) AS name, u.email, u.avatar_url,
-                  tm.role, tm.joined_at
+                  tm.role, tm.joined_at, u.last_login, (u.managed_by_team = tm.team_id) AS managed
              FROM team_members tm JOIN users u ON u.id = tm.user_id
             WHERE tm.team_id = $1
             ORDER BY CASE tm.role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, lower(COALESCE(NULLIF(u.name, ''), u.email))`,
@@ -287,6 +319,9 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
         role: r.role,
         joinedAt: r.joined_at,
         isYou: r.id === userId,
+        managed: !!r.managed, // a company account (removing it deletes it)
+        // Last sign-in is only for the people who manage the team
+        ...(perms.viewInvites ? { lastActive: r.last_login || null } : {}),
       }));
 
       let invites = [];
@@ -319,7 +354,7 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
           plan: m.owner_plan,
           seats: { used: await seatsUsed(pool, m.team_id), limit: seatLimit(m.owner_plan) },
         },
-        me: { userId, role: m.role, ...(await joinInfo(pool, m.team_id, userId)) },
+        me: { userId, role: m.role, managed: await isManaged(pool, userId), ...(await joinInfo(pool, m.team_id, userId)) },
         permissions: perms,
         members,
         invites,
@@ -384,9 +419,12 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
       const m = await membershipOf(pool, req.user.userId);
       if (!m) throw new HttpError(404, "You're not on a team.");
       if (!permissionsFor(m.role).deleteTeam) throw new HttpError(403, "Only the team owner can delete the team.");
+      // Company accounts only exist for this team, so they go with it
+      const managed = await pool.query(`SELECT id FROM users WHERE managed_by_team = $1 AND id <> $2`, [m.team_id, req.user.userId]);
       await pool.query("DELETE FROM teams WHERE id = $1 AND owner_user_id = $2", [m.team_id, req.user.userId]);
+      for (const row of managed.rows) await deleteManagedAccount(pool, row.id, m.team_id);
       sends.delete(m.team_id);
-      return res.json({ success: true });
+      return res.json({ success: true, accountsDeleted: managed.rows.length });
     } catch (err) {
       return fail(res, err, "Delete team");
     }
@@ -571,6 +609,11 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
 
       if (targetId === userId) {
         if (m.role === "owner") throw new HttpError(400, "The owner can't leave the team. Delete the team instead.");
+        if (await isManaged(pool, userId)) {
+          throw new HttpError(403, `Your account is managed by ${m.store.name}. Ask the owner or a supervisor to remove you.`, {
+            code: "MANAGED_ACCOUNT",
+          });
+        }
       } else {
         const t = await pool.query(`SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`, [m.team_id, targetId]);
         if (!t.rows[0]) throw new HttpError(404, "Member not found.");
@@ -579,9 +622,72 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
         }
       }
       await pool.query(`DELETE FROM team_members WHERE team_id = $1 AND user_id = $2 AND role <> 'owner'`, [m.team_id, targetId]);
-      return res.json({ success: true });
+      const accountDeleted = targetId !== userId && (await deleteManagedAccount(pool, targetId, m.team_id));
+      return res.json({ success: true, accountDeleted });
     } catch (err) {
       return fail(res, err, "Remove member");
+    }
+  });
+
+  // The member `targetId` if the caller may manage them (same rule as removing)
+  async function manageable(callerId, targetId) {
+    const m = await membershipOf(pool, callerId);
+    if (!m) throw new HttpError(404, "You're not on a team.");
+    if (targetId === callerId) throw new HttpError(400, "Use your own Settings for your account.");
+    const t = await pool.query(
+      `SELECT tm.role, u.email, u.company_name, (u.managed_by_team = tm.team_id) AS managed
+         FROM team_members tm JOIN users u ON u.id = tm.user_id
+        WHERE tm.team_id = $1 AND tm.user_id = $2`,
+      [m.team_id, targetId]
+    );
+    const target = t.rows[0];
+    if (!target) throw new HttpError(404, "Member not found.");
+    if (!permissionsFor(m.role).removeRoles.includes(target.role)) throw new HttpError(403, "You can't manage this person.");
+    return { m, target };
+  }
+
+  // ── POST /api/team/members/:userId/reset-password ── email a company account a reset link
+  router.post("/api/team/members/:userId/reset-password", authenticateToken, async (req, res) => {
+    try {
+      const targetId = Number(req.params.userId);
+      if (!Number.isInteger(targetId)) throw new HttpError(400, "Invalid member.");
+      const { m, target } = await manageable(req.user.userId, targetId);
+      if (!target.managed) {
+        throw new HttpError(403, "This person uses their own Aervo account. They can reset their password from the sign-in page.");
+      }
+      if (!underSendLimit(m.team_id)) throw new HttpError(429, "Too many emails sent today. Try again tomorrow.");
+      const token = crypto.randomBytes(32).toString("hex");
+      // Same format as /api/forgot-password: only a hash is stored, 1 hour
+      await pool.query(
+        `UPDATE users SET reset_token = $1, reset_token_expires = NOW() + interval '1 hour' WHERE id = $2`,
+        [crypto.createHash("sha256").update(token).digest("hex"), targetId]
+      );
+      noteSend(m.team_id);
+      let emailSent = true;
+      try {
+        const { sendPasswordResetEmail } = require("../utils/email");
+        await sendPasswordResetEmail({ toEmail: target.email, companyName: m.store.name, token });
+      } catch (err) {
+        console.error("Team password reset email failed:", err.message);
+        emailSent = false;
+      }
+      return res.json({ success: true, emailSent });
+    } catch (err) {
+      return fail(res, err, "Team password reset");
+    }
+  });
+
+  // ── POST /api/team/members/:userId/sign-out ── end a company account's sessions on every device
+  router.post("/api/team/members/:userId/sign-out", authenticateToken, async (req, res) => {
+    try {
+      const targetId = Number(req.params.userId);
+      if (!Number.isInteger(targetId)) throw new HttpError(400, "Invalid member.");
+      const { target } = await manageable(req.user.userId, targetId);
+      if (!target.managed) throw new HttpError(403, "This person uses their own Aervo account, so only they can sign it out.");
+      await revokeSessions(pool, targetId);
+      return res.json({ success: true });
+    } catch (err) {
+      return fail(res, err, "Team sign-out");
     }
   });
 
@@ -653,10 +759,10 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
         // The link was emailed to this address, so the account starts verified.
         // It belongs to a team, not a store, so it skips merchant onboarding.
         const u = await client.query(
-          `INSERT INTO users (email, password_hash, company_name, name, role, email_verified, onboarded)
-           VALUES ($1, $2, $3, $4, 'Team member', TRUE, TRUE)
+          `INSERT INTO users (email, password_hash, company_name, name, role, email_verified, onboarded, managed_by_team)
+           VALUES ($1, $2, $3, $4, 'Team member', TRUE, TRUE, $5)
            RETURNING id, email, company_name, role, token_version`,
-          [inv.email.toLowerCase(), hash, inv.team_name, name]
+          [inv.email.toLowerCase(), hash, inv.team_name, name, inv.team_id]
         );
         await joinFromInvite(client, inv, u.rows[0].id);
         return { user: u.rows[0], team: { id: inv.team_id, name: inv.team_name, role: inv.role } };
