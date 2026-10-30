@@ -56,7 +56,7 @@ Marked "coming soon" on the pricing pages until they ship.
 | AI Revenue Forecasting | Pro | Forecast from order history (Square/Shopify/IMS) + a chart; gate with `revenueForecast` |
 | Win-back campaign generator | Pro | At-risk list exists (Square segments, Shopify "60+ days"); needs AI email/SMS drafts and sending; gate with `winBackCampaigns` |
 | AI Marketing Copy | Pro | Prompted generator for posts/emails; gate with `aiMarketingCopy` |
-| Staff performance scores | Pro | Square team members are now synced; needs sales per staff + scoring |
+| Staff performance scores | Pro | Activity scores are built (Team management → Performance: checklist items, tasks on time, announcements read; `routes/teamWork.js`). Sales per staff member is not tracked: the user chose activity only (2026-10-30). Not gated by plan yet beyond needing a team (Pro+) |
 | Unified customer view (page) | Pro | API exists (`/api/unified/overview`, now Pro+); no page uses it yet |
 | White-label reports | Business | Reports exist and logo upload exists; reports need the company logo/name and no Aervo branding; gate with `whiteLabel` |
 | Local Market: opportunities | Pro | Built from snapshot + competitors + the store's own sales |

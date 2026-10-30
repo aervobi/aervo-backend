@@ -95,6 +95,8 @@ async function ensureTeamTables(pool) {
       accepted_by  INTEGER,
       revoked_at   TIMESTAMPTZ
     )`);
+  // Owner lets a supervisor view the store's dashboard read-only (middleware/auth.js)
+  await pool.query(`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS can_view_store BOOLEAN NOT NULL DEFAULT FALSE`);
   // Accounts the business created through an invite (see the header)
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_by_team INTEGER`);
   // Accounts made on the join page before the column existed: they were created
@@ -144,6 +146,20 @@ function storeOf(owner, teamName) {
   };
 }
 
+// Which dashboards the owner has (for a supervisor allowed to view the store)
+async function ownerDashboards(db, ownerId) {
+  const out = [];
+  const shop = await db.query(`SELECT 1 FROM connected_stores WHERE user_id = $1 LIMIT 1`, [ownerId]).catch(() => ({ rows: [] }));
+  if (shop.rows.length) out.push("shopify");
+  const sq = await db.query(`SELECT 1 FROM square_connections WHERE aervo_merchant_id = $1::text LIMIT 1`, [ownerId]).catch(() => ({ rows: [] }));
+  if (sq.rows.length) out.push("square");
+  const u = await db.query(`SELECT platform FROM users WHERE id = $1`, [ownerId]);
+  const p = u.rows[0]?.platform;
+  if (p === "csv" || p === "ims") out.push("ims");
+  if (!out.length && (p === "square" || p === "shopify")) out.push(p);
+  return out;
+}
+
 // Members plus open (not expired) invites
 async function seatsUsed(db, teamId) {
   const r = await db.query(
@@ -161,7 +177,12 @@ async function teamSummaryFor(pool, userId) {
     const m = await membershipOf(pool, userId);
     if (!m) return null;
     // managed = a company account: it can't leave the team or delete itself
-    return { id: m.team_id, name: m.name, role: m.role, store: m.store, managed: await isManaged(pool, userId) };
+    const out = { id: m.team_id, name: m.name, role: m.role, store: m.store, managed: await isManaged(pool, userId) };
+    if (m.role === "supervisor") {
+      const v = await pool.query(`SELECT can_view_store FROM team_members WHERE user_id = $1`, [userId]);
+      if (v.rows[0]?.can_view_store) out.storeDashboards = await ownerDashboards(pool, m.owner_user_id);
+    }
+    return out;
   } catch {
     return null;
   }
@@ -305,7 +326,7 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
       const members = (
         await pool.query(
           `SELECT u.id, COALESCE(NULLIF(u.name, ''), u.company_name, u.email) AS name, u.email, u.avatar_url,
-                  tm.role, tm.joined_at, u.last_login, (u.managed_by_team = tm.team_id) AS managed
+                  tm.role, tm.joined_at, u.last_login, (u.managed_by_team = tm.team_id) AS managed, tm.can_view_store
              FROM team_members tm JOIN users u ON u.id = tm.user_id
             WHERE tm.team_id = $1
             ORDER BY CASE tm.role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, lower(COALESCE(NULLIF(u.name, ''), u.email))`,
@@ -320,6 +341,7 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
         joinedAt: r.joined_at,
         isYou: r.id === userId,
         managed: !!r.managed, // a company account (removing it deletes it)
+        canViewStore: r.role === "supervisor" && !!r.can_view_store,
         // Last sign-in is only for the people who manage the team
         ...(perms.viewInvites ? { lastActive: r.last_login || null } : {}),
       }));
@@ -581,17 +603,28 @@ module.exports = function teamRoutes(pool, authenticateToken, { authLimiter } = 
   router.patch("/api/team/members/:userId", authenticateToken, async (req, res) => {
     try {
       const targetId = Number(req.params.userId);
-      const role = String(req.body?.role || "");
       if (!Number.isInteger(targetId)) throw new HttpError(400, "Invalid member.");
-      if (!["supervisor", "member"].includes(role)) throw new HttpError(400, "Role must be supervisor or member.");
+      const hasRole = req.body?.role !== undefined;
+      const hasView = req.body?.canViewStore !== undefined;
+      const role = String(req.body?.role || "");
+      if (!hasRole && !hasView) throw new HttpError(400, "Nothing to change.");
+      if (hasRole && !["supervisor", "member"].includes(role)) throw new HttpError(400, "Role must be supervisor or member.");
       const m = await membershipOf(pool, req.user.userId);
       if (!m) throw new HttpError(404, "You're not on a team.");
-      if (!permissionsFor(m.role).changeRoles) throw new HttpError(403, "Only the team owner can change roles.");
-      const r = await pool.query(
-        `UPDATE team_members SET role = $3 WHERE team_id = $1 AND user_id = $2 AND role <> 'owner' RETURNING user_id`,
-        [m.team_id, targetId, role]
+      if (!permissionsFor(m.role).changeRoles) throw new HttpError(403, "Only the team owner can change roles or store access.");
+      const t = await pool.query(`SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2 AND role <> 'owner'`, [m.team_id, targetId]);
+      if (!t.rows[0]) throw new HttpError(404, "Member not found.");
+      const newRole = hasRole ? role : t.rows[0].role;
+      if (hasView && req.body.canViewStore && newRole !== "supervisor") {
+        throw new HttpError(400, "Only supervisors can be given access to the store dashboard.");
+      }
+      // Members never keep store access (a demotion switches it off)
+      const view = newRole === "supervisor" && (hasView ? !!req.body.canViewStore : undefined);
+      await pool.query(
+        `UPDATE team_members SET role = $3, can_view_store = CASE WHEN $3 = 'supervisor' THEN COALESCE($4, can_view_store) ELSE FALSE END
+          WHERE team_id = $1 AND user_id = $2 AND role <> 'owner'`,
+        [m.team_id, targetId, newRole, view === undefined ? null : view]
       );
-      if (!r.rows[0]) throw new HttpError(404, "Member not found.");
       return res.json({ success: true });
     } catch (err) {
       return fail(res, err, "Change role");

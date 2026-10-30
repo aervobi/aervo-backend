@@ -218,11 +218,55 @@ async function authenticateToken(req, res, next) {
     }
   }
 
+  // Supervisor "view store": a request marked X-Aervo-View-Store reads the team
+  // owner's store data instead of the caller's, if the owner allowed it
+  // (team_members.can_view_store) and it is a read-only page on STORE_VIEW_PATHS.
+  if (req.headers[STORE_VIEW_HEADER]) {
+    const owner = pool && (await storeViewOwner(pool, payload.userId, req));
+    if (!owner) {
+      return res.status(403).json({ success: false, code: "VIEW_ONLY", message: "You can view the store's dashboard, but not change anything." });
+    }
+    req.user = { ...payload, userId: owner, viewerId: payload.userId, viewOnly: true };
+    req.authViaCookie = viaCookie;
+    require("../utils/aiSpend").enterRequest(owner, req.originalUrl);
+    return next();
+  }
+
   req.user = payload;
   req.authViaCookie = viaCookie;
   // AI calls made while handling this request are this account's spend
   require("../utils/aiSpend").enterRequest(payload.userId, req.originalUrl);
   next();
+}
+
+// ── supervisor store view ────────────────────────────────────────────────────
+// Read-only endpoints the store dashboards load. Anything not listed (writes, AI,
+// billing, settings, integrations, team) is refused in view mode.
+const STORE_VIEW_HEADER = "x-aervo-view-store";
+const STORE_VIEW_PATHS = [
+  /^\/api\/user\/me$/,
+  /^\/api\/ims(\/(products|customers|sales|expenses|inventory\/low-stock|analytics\/summary))?\/?$/,
+  /^\/integrations\/square\/(status|orders|appointments|customers\/enriched|locations|top-items)\/?$/,
+  /^\/api\/shopify\/(overview|orders|customers|inventory)\/?$/,
+  /^\/api\/health-score\/?$/,
+  /^\/api\/google-reviews\/?$/,
+];
+
+// The owner's user id if `viewerId` may view their store for this request, else null
+async function storeViewOwner(pool, viewerId, req) {
+  if (req.method !== "GET") return null;
+  const path = (req.originalUrl || "").split("?")[0];
+  if (!STORE_VIEW_PATHS.some((re) => re.test(path))) return null;
+  try {
+    const r = await pool.query(
+      `SELECT t.owner_user_id FROM team_members tm JOIN teams t ON t.id = tm.team_id
+        WHERE tm.user_id = $1 AND tm.role = 'supervisor' AND tm.can_view_store = TRUE`,
+      [viewerId]
+    );
+    return r.rows[0] ? r.rows[0].owner_user_id : null;
+  } catch {
+    return null; // team tables missing: fail closed
+  }
 }
 
 // The merchant id used by the Square and AI tables is the Aervo user id as text.
@@ -260,4 +304,5 @@ module.exports = {
   ownMerchantId,
   rejectForeignId,
   isProd,
+  STORE_VIEW_HEADER,
 };

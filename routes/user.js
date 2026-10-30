@@ -89,6 +89,41 @@ module.exports = (pool, authenticateToken) => {
       const planKey = eff.plan;
       const ai = await aiUsage(pool, req.user.userId).catch(() => null);
 
+      const shopOut = activeStore ? {
+        shopOrigin:  activeStore.store_origin,
+        installedAt: activeStore.connected_at,
+        storeName:   activeStore.store_name,
+        integration: activeStore.integration_name,
+      } : null;
+      const featuresOut = Object.fromEntries(
+        Object.entries(PLANS[planKey]).map(([k, v]) => [k, v === Infinity ? null : v])
+      );
+
+      // A supervisor viewing the owner's store (middleware/auth.js "view store"):
+      // only what the dashboards need, nothing personal or billing-related
+      if (req.user.viewOnly) {
+        return res.json({
+          success: true,
+          viewOnly: true,
+          user: {
+            id:               user.id,
+            name:             user.company_name || "",
+            companyName:      user.company_name,
+            companyLogoUrl:   user.company_logo_url,
+            businessType:     user.business_type,
+            location:         user.location,
+            platform:         user.platform,
+            plan:             planKey,
+            squareMerchantId: user.square_merchant_id,
+            onboarded:        true,
+          },
+          team: null,
+          planFeatures: featuresOut,
+          aiUsage: null,
+          shop: shopOut,
+        });
+      }
+
       return res.json({
   success: true,
   user: {

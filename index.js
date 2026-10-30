@@ -57,7 +57,7 @@ app.disable("x-powered-by");
 const corsOptions = {
   origin: ALLOWED_ORIGINS,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-requested-with", "X-Aervo-View-Store"],
   exposedHeaders: ["Content-Type"],
   credentials: true,
 };
@@ -282,6 +282,9 @@ app.use("/", require("./routes/team")(pool, authenticateToken, { authLimiter }))
 
 // Team messaging (DMs, group chats, live updates) — routes/messages.js
 app.use("/", require("./routes/messages")(pool, authenticateToken));
+
+// Team work: announcements, shift checklists, tasks, activity scores — routes/teamWork.js
+app.use("/", require("./routes/teamWork")(pool, authenticateToken));
 
 const unifiedRoutes = require("./routes/unified");
 const { requireFeature, aiQuota, planFor, historyStart } = require("./utils/planAccess");
