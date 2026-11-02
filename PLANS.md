@@ -30,7 +30,7 @@ _Last reviewed: 2026-10-17 (repricing, trial + Lite, fair-use caps, AI spend tra
 | Dashboard tabs | Overview only | All | All | All | Square + Shopify dashboards (page-level lock) |
 | Customer segments | No | Yes | Yes | Yes | Square `/customers/enriched` drops segments |
 | Google Reviews | No | Yes | Yes | Yes | `/api/google-reviews` (`requirePlan`) |
-| Unified customer view (API) | No | No | Yes | Yes | `/api/unified/*` |
+| All-sources dashboard (Square + Shopify + IMS, together or one at a time) | No | No | Yes | Yes | `/api/unified/overview` (`unifiedView`), page `/dashboard/all` (upgrade card on 403) |
 | Team seats | 0 | 0 | 10 | 50 | Team invites (`routes/team.js`); team messaging (`routes/messages.js`) sends only while the owner's plan has seats, reading always works |
 | Local market snapshot (Census + AI local angle) | No | Yes | Yes | Yes | `/api/market/snapshot` (`marketSnapshot`) |
 | 7-day demand forecast | No | No | Yes | Yes | `/api/market/forecast` (`demandForecast`) |
@@ -57,7 +57,6 @@ Marked "coming soon" on the pricing pages until they ship.
 | Win-back campaign generator | Pro | At-risk list exists (Square segments, Shopify "60+ days"); needs AI email/SMS drafts and sending; gate with `winBackCampaigns` |
 | AI Marketing Copy | Pro | Prompted generator for posts/emails; gate with `aiMarketingCopy` |
 | Staff performance scores | Pro | Activity scores are built (Team management → Performance: checklist items, tasks on time, announcements read; `routes/teamWork.js`). Sales per staff member is not tracked: the user chose activity only (2026-10-30). Not gated by plan yet beyond needing a team (Pro+) |
-| Unified customer view (page) | Pro | API exists (`/api/unified/overview`, now Pro+); no page uses it yet |
 | White-label reports | Business | Reports exist and logo upload exists; reports need the company logo/name and no Aervo branding; gate with `whiteLabel` |
 | Local Market: opportunities | Pro | Built from snapshot + competitors + the store's own sales |
 | Local events in the forecast | Pro | Events API key (Ticketmaster Discovery free, or PredictHQ paid) |

@@ -56,6 +56,14 @@ module.exports = (pool, authenticateToken) => {
 
       const user = result.rows[0];
 
+      // Records sales or products in the IMS, whatever else it sells through
+      const ims = await pool.query(
+        `SELECT EXISTS (SELECT 1 FROM aervo_sales WHERE merchant_id = $1)
+             OR EXISTS (SELECT 1 FROM aervo_products WHERE merchant_id = $1) AS used`,
+        [req.user.userId]
+      ).catch(() => ({ rows: [] }));
+      user.uses_ims = !!(ims.rows[0] && ims.rows[0].used);
+
       // Get connected shop
       const storeResult = await pool.query(
         `SELECT id, integration_name, store_name, store_origin, connected_at
@@ -115,6 +123,7 @@ module.exports = (pool, authenticateToken) => {
             platform:         user.platform,
             plan:             planKey,
             squareMerchantId: user.square_merchant_id,
+            usesIms:          user.uses_ims,
             onboarded:        true,
           },
           team: null,
@@ -148,6 +157,7 @@ module.exports = (pool, authenticateToken) => {
     trial:          eff.trial,              // { plan, endsAt, daysLeft } or null
     isFounder:      isFounder(user),
     squareMerchantId: user.square_merchant_id,
+    usesIms:          user.uses_ims,
   },
   team, // { id, name, role, store: { name, logoUrl, location, ... } } or null
   // What the plan includes, for showing locked/upgrade states. The server
